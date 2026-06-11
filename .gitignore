@@ -48,3 +48,6 @@ Thumbs.db
 debug_*.bin
 reference/decoder_debug/
 reference/debug/
+
+# reference code
+Qwen3-TTS-reference/
