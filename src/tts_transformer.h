@@ -282,6 +282,7 @@ public:
                   float repetition_penalty = 1.05f,
                   float temperature = 0.9f,
                   int32_t top_k = 50,
+                  float top_p = 1.0f,
                   float subtalker_temperature = -1.0f,
                   int32_t subtalker_top_k = -1,
                   bool non_streaming_mode = false);
@@ -297,15 +298,11 @@ public:
                       float repetition_penalty = 1.05f,
                       float temperature = 0.9f,
                       int32_t top_k = 50,
+                      float top_p = 1.0f,
                       float subtalker_temperature = -1.0f,
                       int32_t subtalker_top_k = -1,
                       bool non_streaming_mode = false);
-    
-    // Generate speech codes autoregressively using a pre-built prefill embedding.
-    // This is the common inner loop used by generate_icl() and the instruct path.
-    // prefill_embd: pre-built prefill [prefill_len * hidden_size]
-    // trailing_text_hidden: trailing text hidden states [(trailing_len) * hidden_size]
-    // tts_pad_embed: TTS pad embedding [hidden_size]
+
     bool generate_from_prefill(const std::vector<float> & prefill_embd,
                                 const std::vector<float> & trailing_text_hidden,
                                 const std::vector<float> & tts_pad_embed,
@@ -314,6 +311,7 @@ public:
                                 float repetition_penalty = 1.05f,
                                 float temperature = 0.9f,
                                 int32_t top_k = 50,
+                                float top_p = 1.0f,
                                 float subtalker_temperature = -1.0f,
                                 int32_t subtalker_top_k = -1);
 
@@ -361,7 +359,8 @@ private:
                                        const int32_t * instruct_tokens, int32_t n_instruct_tokens,
                                        std::vector<float> & prefill_embd,
                                        std::vector<float> & trailing_text_hidden,
-                                       std::vector<float> & tts_pad_embed);
+                                       std::vector<float> & tts_pad_embed,
+                                       bool non_streaming_mode = false);
 
     struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
 

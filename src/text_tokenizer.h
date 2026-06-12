@@ -35,6 +35,11 @@ public:
     // Encode reference transcript: <|im_start|>assistant\n{text}<|im_end|>\n
     std::vector<int32_t> encode_ref_text(const std::string & text) const;
 
+    // Encode reference transcript body only (no role tokens/wrappers).
+    // Returns just the text tokens — equivalent to Python's ref_ids[3:-2]
+    // Used for ICL prefill where role tokens must be stripped.
+    std::vector<int32_t> encode_ref_text_body(const std::string & text) const;
+
     // Encode instruct text: <|im_start|>user\n{instruct}<|im_end|>\n
     std::vector<int32_t> encode_instruct(const std::string & instruct) const;
     

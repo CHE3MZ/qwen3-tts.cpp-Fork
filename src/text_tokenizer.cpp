@@ -372,6 +372,13 @@ std::vector<int32_t> TextTokenizer::encode_ref_text(const std::string & text) co
     return tokens;
 }
 
+// Body-only reference text: just the text tokens without role wrappers.
+// Equivalent to Python's ref_ids[:, 3:-2] used in generate_icl_prompt().
+std::vector<int32_t> TextTokenizer::encode_ref_text_body(const std::string & text) const {
+    if (!loaded_) return {};
+    return encode(text);
+}
+
 // <|im_start|>user\n{instruct}<|im_end|>\n
 std::vector<int32_t> TextTokenizer::encode_instruct(const std::string & instruct) const {
     if (!loaded_) return {};

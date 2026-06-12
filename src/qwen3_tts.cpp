@@ -331,8 +331,8 @@ int32_t Qwen3TTS::resolve_language_id(const std::string & language_name) const {
     auto it = cfg.codec_language_id.find(lower);
     if (it != cfg.codec_language_id.end()) return it->second;
 
-    // "auto" → english
-    if (lower == "auto") return cfg.english_language_id;
+    // "auto" → -1 which triggers the nothink (no language token) path in build_prefill_graph
+    if (lower == "auto") return -1;
 
     // Try raw integer string
     char * end = nullptr;
@@ -371,7 +371,7 @@ int32_t Qwen3TTS::resolve_language_id(const std::string & language_name) const {
         if (lower == fallback[i].name) return fallback[i].id;
     }
 
-    return cfg.english_language_id; // ultimate fallback
+    return cfg.english_language_id; // named language not found, default to english
 }
 
 int32_t Qwen3TTS::resolve_speaker_id(const std::string & speaker_name) const {
@@ -393,17 +393,13 @@ static int32_t resolve_dialect_language(const tts_transformer_config & cfg,
     auto dit = cfg.spk_is_dialect.find(speaker_lower);
     if (dit == cfg.spk_is_dialect.end()) return -2;
 
-    // Python only overrides when language is Chinese or Auto
+    // Python only overrides when language is Chinese or Auto (None)
     bool is_chinese_or_auto = false;
     auto chinese_it = cfg.codec_language_id.find("chinese");
     if (requested_language_id < 0) {
-        is_chinese_or_auto = true; // "auto"
+        is_chinese_or_auto = true; // "auto" → -1
     } else if (chinese_it != cfg.codec_language_id.end() &&
                requested_language_id == chinese_it->second) {
-        is_chinese_or_auto = true;
-    }
-    // Also treat english default (auto fallback) as override-eligible
-    if (requested_language_id == cfg.english_language_id) {
         is_chinese_or_auto = true;
     }
 
@@ -500,7 +496,15 @@ tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & par
     // VoiceDesign or CustomVoice with instruct text
     if ((model_type == MODEL_TYPE_VOICE_DESIGN || model_type == MODEL_TYPE_CUSTOM_VOICE)
             && !params.instruct.empty()) {
-        return synthesize_internal(text, nullptr, params, result);
+        // 0.6b CustomVoice does not support instruct — matches Python's check
+        // `if self.model.tts_model_size in "0b6": instruct = None`
+        std::string sz = get_model_size();
+        bool instruct_supported = !(model_type == MODEL_TYPE_CUSTOM_VOICE &&
+                                    (sz == "0.6b" || sz == "0b6"));
+        if (instruct_supported) {
+            return synthesize_internal(text, nullptr, params, result);
+        }
+        // Fall through to normal synthesis without instruct
     }
 
     // Base model: voice clone paths
@@ -561,8 +565,9 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
             if (mimi_encoder_.encode(ref_samples, n_ref_samples, ref_codes, n_ref_frames) &&
                 n_ref_frames > 0) {
 
-                // Tokenize reference text
-                std::vector<int32_t> ref_text_toks = tokenizer_.encode_ref_text(params.ref_text);
+                // Tokenize reference text — body only (strip role tokens)
+                // Matches Python's ref_ids[3:-2] passed to generate_icl_prompt()
+                std::vector<int32_t> ref_text_toks = tokenizer_.encode_ref_text_body(params.ref_text);
 
                 std::vector<int32_t> text_tokens = tokenizer_.encode_for_tts(text);
                 if (text_tokens.empty()) {
@@ -593,7 +598,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                     params.max_audio_tokens, speech_codes,
                     language_id,
                     params.repetition_penalty,
-                    params.temperature, params.top_k,
+                    params.temperature, params.top_k, params.top_p,
                     params.subtalker_temperature, params.subtalker_top_k,
                     params.non_streaming_mode);
 
@@ -837,20 +842,26 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
 
     if (!instruct_tokens.empty()) {
         // VoiceDesign / CustomVoice with instruction:
-        // Build a prefill that prepends the instruct projection, then run
-        // the shared generate_from_prefill loop.
+        // Python's generate_voice_design() defaults non_streaming_mode=True.
+        // Apply that default here if the caller left it at its struct default (false).
+        bool use_non_streaming = params.non_streaming_mode;
+        if (model_type == MODEL_TYPE_VOICE_DESIGN && !params.non_streaming_mode) {
+            use_non_streaming = true;
+        }
+
         transformer_.clear_kv_cache();
         std::vector<float> prefill_embd, trailing, tts_pad;
         if (transformer_.build_prefill_graph_instruct(
                     text_tokens.data(), (int32_t)text_tokens.size(),
                     speaker_embedding, language_id,
                     instruct_tokens.data(), (int32_t)instruct_tokens.size(),
-                    prefill_embd, trailing, tts_pad)) {
+                    prefill_embd, trailing, tts_pad,
+                    use_non_streaming)) {
             gen_ok = transformer_.generate_from_prefill(
                 prefill_embd, trailing, tts_pad,
                 params.max_audio_tokens, speech_codes,
                 params.repetition_penalty,
-                params.temperature, params.top_k,
+                params.temperature, params.top_k, params.top_p,
                 params.subtalker_temperature, params.subtalker_top_k);
         }
         if (!gen_ok) {
@@ -865,7 +876,7 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
             params.max_audio_tokens, speech_codes,
             language_id,
             params.repetition_penalty,
-            params.temperature, params.top_k,
+            params.temperature, params.top_k, params.top_p,
             params.subtalker_temperature, params.subtalker_top_k,
             params.non_streaming_mode);
     }

@@ -407,10 +407,8 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
                 }
             }
         }
-        // Always ensure "auto" maps to english_language_id as fallback
-        if (cfg.codec_language_id.find("auto") == cfg.codec_language_id.end()) {
-            cfg.codec_language_id["auto"] = cfg.english_language_id;
-        }
+        // "auto" means no language token (uses codec_nothink_id path, language_id=-1)
+        // Do NOT add it to the table so resolve_language_id("auto") returns -1 via its own check
     }
 
     // spk_is_dialect table: "qwen3-tts.speakers.dialect_names" (string array of speaker names)
@@ -2533,48 +2531,17 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
     
     output.resize(15);
     std::vector<float> logits_data(cfg.code_pred_vocab_size);
-    
     std::vector<float> code_probs(cfg.code_pred_vocab_size);
-    
-    // Helper lambda: temperature + top-k sampling (or greedy if temperature <= 0)
+    std::unordered_set<int32_t> empty_set;  // no rep penalty for sub-talker
+
+    // Helper: sample from code predictor logits using temperature + top-k + top-p
+    // sub-talker does not use suppress_tokens or repetition_penalty
     auto sample_or_argmax = [&](float * logits_ptr, int32_t vocab_size) -> int32_t {
-        if (temperature <= 0.0f) {
-            return argmax(logits_ptr, vocab_size);
-        }
-        // Temperature scaling
-        for (int32_t i = 0; i < vocab_size; ++i) {
-            logits_ptr[i] /= temperature;
-        }
-        // Top-k filtering
-        if (top_k > 0 && top_k < vocab_size) {
-            std::vector<std::pair<float, int32_t>> scored(vocab_size);
-            for (int32_t i = 0; i < vocab_size; ++i) {
-                scored[i] = {logits_ptr[i], i};
-            }
-            std::partial_sort(scored.begin(), scored.begin() + top_k, scored.end(),
-                [](const std::pair<float, int32_t> & a, const std::pair<float, int32_t> & b) {
-                    return a.first > b.first;
-                });
-            float threshold = scored[top_k - 1].first;
-            for (int32_t i = 0; i < vocab_size; ++i) {
-                if (logits_ptr[i] < threshold) {
-                    logits_ptr[i] = -INFINITY;
-                }
-            }
-        }
-        // Softmax
-        float max_logit = *std::max_element(logits_ptr, logits_ptr + vocab_size);
-        double sum = 0.0;
-        for (int32_t i = 0; i < vocab_size; ++i) {
-            code_probs[i] = expf(logits_ptr[i] - max_logit);
-            sum += code_probs[i];
-        }
-        for (int32_t i = 0; i < vocab_size; ++i) {
-            code_probs[i] = (float)(code_probs[i] / sum);
-        }
-        // Sample
-        std::discrete_distribution<int32_t> dist(code_probs.begin(), code_probs.begin() + vocab_size);
-        return dist(rng_);
+        std::vector<float> lv(logits_ptr, logits_ptr + vocab_size);
+        return sample_token(lv, vocab_size, -1 /*no eos*/, vocab_size /*suppress none*/,
+                            empty_set, 1.0f /*no rep penalty*/,
+                            temperature, top_k, 1.0f /*top_p: sub-talker uses 1.0*/,
+                            code_probs, rng_);
     };
     
     std::vector<float> cb0_embd(cfg.hidden_size);
@@ -2765,6 +2732,105 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Shared sampling helper: suppress → rep-penalty → temperature → top_k →
+// top_p → softmax → sample. Called from generate(), generate_icl(),
+// generate_from_prefill().
+// Returns the sampled token index.
+// ---------------------------------------------------------------------------
+static int32_t sample_token(
+        std::vector<float> & logits,
+        int32_t vocab_size,
+        int32_t eos_id,
+        int32_t suppress_start,
+        const std::unordered_set<int32_t> & gen_tokens,
+        float repetition_penalty,
+        float temperature,
+        int32_t top_k,
+        float top_p,
+        std::vector<float> & probs,
+        std::mt19937 & rng) {
+
+    // 1. Suppress [suppress_start, vocab_size) except EOS
+    for (int32_t i = suppress_start; i < vocab_size; ++i) {
+        if (i != eos_id) logits[i] = -INFINITY;
+    }
+
+    // 2. Repetition penalty (HuggingFace style)
+    if (repetition_penalty != 1.0f) {
+        for (int32_t tok : gen_tokens) {
+            if (tok >= 0 && tok < vocab_size) {
+                if (logits[tok] > 0.0f) logits[tok] /= repetition_penalty;
+                else                    logits[tok] *= repetition_penalty;
+            }
+        }
+    }
+
+    // 3. Greedy if temperature == 0
+    if (temperature <= 0.0f) {
+        return argmax(logits.data(), vocab_size);
+    }
+
+    // 4. Temperature scaling
+    for (int32_t i = 0; i < vocab_size; ++i) logits[i] /= temperature;
+
+    // 5. Top-k filtering
+    if (top_k > 0 && top_k < vocab_size) {
+        std::vector<std::pair<float,int32_t>> sc(vocab_size);
+        for (int32_t i = 0; i < vocab_size; ++i) sc[i] = {logits[i], i};
+        std::partial_sort(sc.begin(), sc.begin() + top_k, sc.end(),
+            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
+                return a.first > b.first;
+            });
+        float thr = sc[top_k - 1].first;
+        for (int32_t i = 0; i < vocab_size; ++i) if (logits[i] < thr) logits[i] = -INFINITY;
+    }
+
+    // 6. Top-p (nucleus) filtering — applied after top_k, matches HuggingFace order
+    if (top_p > 0.0f && top_p < 1.0f) {
+        float mx = *std::max_element(logits.data(), logits.data() + vocab_size);
+        // Compute unnormalised probs for sorting
+        std::vector<std::pair<float,int32_t>> sp(vocab_size);
+        double sum_p = 0.0;
+        for (int32_t i = 0; i < vocab_size; ++i) {
+            float p = expf(logits[i] - mx);
+            sp[i] = {p, i};
+            sum_p += p;
+        }
+        // Normalise
+        for (auto & x : sp) x.first /= (float)sum_p;
+        std::sort(sp.begin(), sp.end(),
+            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
+                return a.first > b.first;
+            });
+        // Find cutoff: accumulate until >= top_p
+        float cumul = 0.0f, cutoff = 0.0f;
+        for (auto & x : sp) {
+            cumul += x.first;
+            cutoff = x.first;
+            if (cumul >= top_p) break;
+        }
+        // Mask below cutoff
+        for (int32_t i = 0; i < vocab_size; ++i) {
+            float p = expf(logits[i] - mx) / (float)sum_p;
+            if (p < cutoff) logits[i] = -INFINITY;
+        }
+    }
+
+    // 7. Softmax → sample
+    float mx = *std::max_element(logits.data(), logits.data() + vocab_size);
+    double sum = 0.0;
+    probs.resize(vocab_size);
+    for (int32_t i = 0; i < vocab_size; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum += probs[i];
+    }
+    for (int32_t i = 0; i < vocab_size; ++i) probs[i] = (float)(probs[i] / sum);
+
+    std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
+    return dist(rng);
+}
+
 bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
                                const float * speaker_embd, int32_t max_len,
                                std::vector<int32_t> & output,
@@ -2772,6 +2838,7 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
                                float repetition_penalty,
                                float temperature,
                                int32_t top_k,
+                               float top_p,
                                float subtalker_temperature,
                                int32_t subtalker_top_k,
                                bool non_streaming_mode) {
@@ -2861,65 +2928,11 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     std::vector<float> embd_row(cfg.hidden_size);
     
     for (int frame = 0; frame < max_len; ++frame) {
-        // Suppress tokens in [codec_vocab_size - 1024, codec_vocab_size), except codec_eos_id
-        for (int32_t i = suppress_start; i < cfg.codec_vocab_size; ++i) {
-            if (i != cfg.codec_eos_id) {
-                logits[i] = -INFINITY;
-            }
-        }
+        int32_t next_token = sample_token(
+            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
+            generated_cb0_tokens, repetition_penalty,
+            temperature, top_k, top_p, probs, rng_);
 
-        // Repetition penalty (HuggingFace style) on previously generated CB0 tokens
-        if (repetition_penalty != 1.0f) {
-            for (int32_t tok : generated_cb0_tokens) {
-                if (tok >= 0 && tok < cfg.codec_vocab_size) {
-                    if (logits[tok] > 0.0f) {
-                        logits[tok] /= repetition_penalty;
-                    } else {
-                        logits[tok] *= repetition_penalty;
-                    }
-                }
-            }
-        }
-
-        int32_t next_token;
-        if (temperature <= 0.0f) {
-            next_token = argmax(logits.data(), cfg.codec_vocab_size);
-        } else {
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) {
-                logits[i] /= temperature;
-            }
-
-            if (top_k > 0 && top_k < cfg.codec_vocab_size) {
-                std::vector<std::pair<float, int32_t>> scored(cfg.codec_vocab_size);
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) {
-                    scored[i] = {logits[i], i};
-                }
-                std::partial_sort(scored.begin(), scored.begin() + top_k, scored.end(),
-                    [](const std::pair<float, int32_t> & a, const std::pair<float, int32_t> & b) {
-                        return a.first > b.first;
-                    });
-                float threshold = scored[top_k - 1].first;
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) {
-                    if (logits[i] < threshold) {
-                        logits[i] = -INFINITY;
-                    }
-                }
-            }
-
-            float max_logit = *std::max_element(logits.data(), logits.data() + cfg.codec_vocab_size);
-            double sum = 0.0;
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) {
-                probs[i] = expf(logits[i] - max_logit);
-                sum += probs[i];
-            }
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) {
-                probs[i] = (float)(probs[i] / sum);
-            }
-
-            std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
-            next_token = dist(rng_);
-        }
-        
         if (next_token == cfg.codec_eos_id) {
             break;
         }
@@ -3201,7 +3214,8 @@ bool TTSTransformer::build_prefill_graph_instruct(
         const int32_t * instruct_tokens, int32_t n_instruct_tokens,
         std::vector<float> & prefill_embd,
         std::vector<float> & trailing_text_hidden,
-        std::vector<float> & tts_pad_embed) {
+        std::vector<float> & tts_pad_embed,
+        bool non_streaming_mode) {
 
     const auto & cfg = model_.config;
     const int32_t H  = cfg.hidden_size;
@@ -3209,7 +3223,8 @@ bool TTSTransformer::build_prefill_graph_instruct(
     std::vector<float> base_prefill;
     std::vector<float> base_trailing;
     if (!build_prefill_graph(text_tokens, n_tokens, speaker_embd, language_id,
-                              base_prefill, base_trailing, tts_pad_embed)) {
+                              base_prefill, base_trailing, tts_pad_embed,
+                              non_streaming_mode)) {
         return false;
     }
 
@@ -3249,6 +3264,7 @@ bool TTSTransformer::generate_icl(
         float   repetition_penalty,
         float   temperature,
         int32_t top_k,
+        float   top_p,
         float   subtalker_temperature,
         int32_t subtalker_top_k,
         bool    non_streaming_mode) {
@@ -3301,39 +3317,10 @@ bool TTSTransformer::generate_icl(
     std::vector<float> embd_row(cfg.hidden_size);
 
     for (int frame = 0; frame < max_len; ++frame) {
-        // suppress + repetition penalty + sample CB0
-        for (int32_t i = suppress_start; i < cfg.codec_vocab_size; ++i) {
-            if (i != cfg.codec_eos_id) logits[i] = -INFINITY;
-        }
-        if (repetition_penalty != 1.0f) {
-            for (int32_t tok : generated_cb0_tokens) {
-                if (tok >= 0 && tok < cfg.codec_vocab_size) {
-                    if (logits[tok] > 0.0f) logits[tok] /= repetition_penalty;
-                    else                    logits[tok] *= repetition_penalty;
-                }
-            }
-        }
-
-        int32_t next_token;
-        if (temperature <= 0.0f) {
-            next_token = argmax(logits.data(), cfg.codec_vocab_size);
-        } else {
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) logits[i] /= temperature;
-            if (top_k > 0 && top_k < cfg.codec_vocab_size) {
-                std::vector<std::pair<float,int32_t>> sc(cfg.codec_vocab_size);
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) sc[i] = {logits[i],i};
-                std::partial_sort(sc.begin(), sc.begin() + top_k, sc.end(),
-                    [](const std::pair<float,int32_t>&a,const std::pair<float,int32_t>&b){return a.first>b.first;});
-                float thr = sc[top_k-1].first;
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) if (logits[i]<thr) logits[i]=-INFINITY;
-            }
-            float mx = *std::max_element(logits.data(), logits.data() + cfg.codec_vocab_size);
-            double sum = 0;
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) { probs[i]=expf(logits[i]-mx); sum+=probs[i]; }
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) probs[i]=(float)(probs[i]/sum);
-            std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
-            next_token = dist(rng_);
-        }
+        int32_t next_token = sample_token(
+            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
+            generated_cb0_tokens, repetition_penalty,
+            temperature, top_k, top_p, probs, rng_);
 
         if (next_token == cfg.codec_eos_id) break;
         frame_codes[0] = next_token;
@@ -3382,6 +3369,7 @@ bool TTSTransformer::generate_from_prefill(
         float repetition_penalty,
         float temperature,
         int32_t top_k,
+        float top_p,
         float subtalker_temperature,
         int32_t subtalker_top_k) {
 
@@ -3422,40 +3410,10 @@ bool TTSTransformer::generate_from_prefill(
     std::vector<float> embd_row(H);
 
     for (int frame = 0; frame < max_len; ++frame) {
-        // Suppress last-1024 tokens except EOS
-        for (int32_t i = suppress_start; i < cfg.codec_vocab_size; ++i) {
-            if (i != cfg.codec_eos_id) logits[i] = -INFINITY;
-        }
-        // Repetition penalty
-        if (repetition_penalty != 1.0f) {
-            for (int32_t tok : generated_cb0_tokens) {
-                if (tok >= 0 && tok < cfg.codec_vocab_size) {
-                    if (logits[tok] > 0.0f) logits[tok] /= repetition_penalty;
-                    else                    logits[tok] *= repetition_penalty;
-                }
-            }
-        }
-        // Sample CB0
-        int32_t next_token;
-        if (temperature <= 0.0f) {
-            next_token = argmax(logits.data(), cfg.codec_vocab_size);
-        } else {
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) logits[i] /= temperature;
-            if (top_k > 0 && top_k < cfg.codec_vocab_size) {
-                std::vector<std::pair<float,int32_t>> sc(cfg.codec_vocab_size);
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) sc[i] = {logits[i],i};
-                std::partial_sort(sc.begin(), sc.begin()+top_k, sc.end(),
-                    [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){return a.first>b.first;});
-                float thr = sc[top_k-1].first;
-                for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) if (logits[i]<thr) logits[i]=-INFINITY;
-            }
-            float mx = *std::max_element(logits.data(), logits.data()+cfg.codec_vocab_size);
-            double sum = 0;
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) { probs[i]=expf(logits[i]-mx); sum+=probs[i]; }
-            for (int32_t i = 0; i < cfg.codec_vocab_size; ++i) probs[i]=(float)(probs[i]/sum);
-            std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
-            next_token = dist(rng_);
-        }
+        int32_t next_token = sample_token(
+            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
+            generated_cb0_tokens, repetition_penalty,
+            temperature, top_k, top_p, probs, rng_);
 
         if (next_token == cfg.codec_eos_id) break;
         frame_codes[0] = next_token;
