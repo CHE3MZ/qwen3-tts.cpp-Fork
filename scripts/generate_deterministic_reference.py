@@ -320,6 +320,26 @@ def main() -> int:
     speech_codes = talker_codes_list[0]
     hidden_states = talker_hidden_states_list[0]
 
+    # ── Also generate with non_streaming_mode=True for validation ──────────
+    with torch.no_grad():
+        ns_codes_list, _ = tts_model.generate(
+            input_ids=[input_id],
+            ref_ids=None,
+            voice_clone_prompt=voice_clone_prompt,
+            languages=[LANGUAGE],
+            non_streaming_mode=True,
+            max_new_tokens=MAX_NEW_TOKENS,
+            do_sample=False,
+            top_k=None,
+            top_p=None,
+            temperature=None,
+            subtalker_dosample=False,
+            subtalker_top_k=None,
+            subtalker_top_p=None,
+            subtalker_temperature=None,
+        )
+    ns_speech_codes = ns_codes_list[0]
+
     wavs, sample_rate = tts_model.speech_tokenizer.decode(
         [{"audio_codes": speech_codes}]
     )
@@ -339,6 +359,9 @@ def main() -> int:
     )
     outputs["det_speech_codes.bin"] = _save_bin(
         speech_codes, OUTPUT_DIR / "det_speech_codes.bin", dtype=np.int64
+    )
+    outputs["det_speech_codes_nonstreaming.bin"] = _save_bin(
+        ns_speech_codes, OUTPUT_DIR / "det_speech_codes_nonstreaming.bin", dtype=np.int64
     )
     outputs["det_hidden_states.bin"] = _save_bin(
         hidden_states, OUTPUT_DIR / "det_hidden_states.bin", dtype=np.float32
@@ -433,6 +456,7 @@ def main() -> int:
             "trailing_text_hidden": list(trailing_text_hidden.shape),
             "tts_pad_embed": list(tts_pad_embed.shape),
             "speech_codes": list(speech_codes.shape),
+            "speech_codes_nonstreaming": list(ns_speech_codes.shape),
             "hidden_states": list(hidden_states.shape),
             "first_frame_logits": list(first_frame_logits.shape),
             "decoded_audio": list(decoded_audio.shape),

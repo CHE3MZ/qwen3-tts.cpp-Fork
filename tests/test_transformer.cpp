@@ -335,10 +335,10 @@ int main(int argc, char ** argv) {
     }
 
     // -----------------------------------------------------------------------
-    // Test 5: Full generation test
+    // Test 5: Full generation test (streaming mode, default)
     //   Call generate() end-to-end, compare all speech codes
     // -----------------------------------------------------------------------
-    printf("Test %d: Full generation test\n", ++test_num);
+    printf("Test %d: Full generation test (streaming mode)\n", ++test_num);
 
     // Clear KV cache for a fresh generation
     transformer.clear_kv_cache();
@@ -351,7 +351,7 @@ int main(int argc, char ** argv) {
 
     bool gen_ok = transformer.generate(
         text_tokens.data(), n_tokens, spk_ptr, max_len,
-        generated_codes, 2050, 1.05f, 0.0f, 0);
+        generated_codes, 2050, 1.05f, 0.0f, 0, 1.0f);
 
     if (!gen_ok) {
         printf("  FAIL: generate() failed: %s\n", transformer.get_error().c_str());
@@ -460,7 +460,68 @@ int main(int argc, char ** argv) {
     }
 
     // -----------------------------------------------------------------------
-    // Test 6: Summary statistics
+    // Test 6: Non-streaming mode generation test
+    //   Call generate() with non_streaming_mode=true, compare against
+    //   det_speech_codes_nonstreaming.bin
+    // -----------------------------------------------------------------------
+    printf("Test %d: Full generation test (non-streaming mode)\n", ++test_num);
+    {
+        const std::string ns_codes_path = ref_dir + "det_speech_codes_nonstreaming.bin";
+        std::vector<int64_t> ns_ref_codes_i64;
+        if (!load_binary_array(ns_codes_path, ns_ref_codes_i64)) {
+            test_warn("Skipped -- no non-streaming reference codes (run generate_deterministic_reference.py first)");
+        } else {
+            std::vector<int32_t> ns_ref_codes(ns_ref_codes_i64.begin(), ns_ref_codes_i64.end());
+            transformer.clear_kv_cache();
+
+            std::vector<int32_t> ns_generated_codes;
+            printf("  Calling generate(non_streaming_mode=true, n_tokens=%d, max_len=%d)...\n",
+                   n_tokens, max_len);
+
+            bool ns_ok = transformer.generate(
+                text_tokens.data(), n_tokens, spk_ptr, max_len,
+                ns_generated_codes, 2050, 1.05f, 0.0f, 0, 1.0f,
+                -1.0f, -1, /*non_streaming_mode=*/true);
+
+            if (!ns_ok) {
+                printf("  FAIL: generate(non_streaming) failed: %s\n", transformer.get_error().c_str());
+                fail_count++;
+            } else {
+                int ns_gen_frames = (int)ns_generated_codes.size() / config.n_codebooks;
+                int ns_ref_frames = (int)ns_ref_codes.size()       / config.n_codebooks;
+                int ns_cmp = std::min(ns_gen_frames, ns_ref_frames);
+
+                printf("  Generated: %d frames, Reference: %d frames\n", ns_gen_frames, ns_ref_frames);
+
+                int ns_match = 0;
+                for (int f = 0; f < ns_cmp; ++f) {
+                    bool ok = true;
+                    for (int cb = 0; cb < config.n_codebooks; ++cb) {
+                        if (ns_generated_codes[f * config.n_codebooks + cb] !=
+                            ns_ref_codes[f * config.n_codebooks + cb]) {
+                            ok = false; break;
+                        }
+                    }
+                    if (ok) ns_match++;
+                }
+
+                printf("  Matching frames: %d / %d (%.1f%%)\n",
+                       ns_match, ns_cmp,
+                       ns_cmp > 0 ? 100.0f * ns_match / ns_cmp : 0.0f);
+
+                if (ns_match == ns_cmp && ns_gen_frames == ns_ref_frames) {
+                    test_pass("Non-streaming codes match reference exactly!");
+                } else if (ns_match > ns_cmp / 2) {
+                    test_warn("Non-streaming partial match -- see statistics above");
+                } else {
+                    test_warn("Non-streaming low match rate -- see statistics above");
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 7: Summary statistics
     // -----------------------------------------------------------------------
     printf("Test %d: Summary\n", ++test_num);
     printf("  +-------------------------------------+\n");
