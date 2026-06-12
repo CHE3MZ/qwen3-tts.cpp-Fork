@@ -31,6 +31,12 @@ public:
     
     // Encode with TTS format: <|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n
     std::vector<int32_t> encode_for_tts(const std::string & text) const;
+
+    // Encode reference transcript: <|im_start|>assistant\n{text}<|im_end|>\n
+    std::vector<int32_t> encode_ref_text(const std::string & text) const;
+
+    // Encode instruct text: <|im_start|>user\n{instruct}<|im_end|>\n
+    std::vector<int32_t> encode_instruct(const std::string & instruct) const;
     
     // Decode token IDs to text
     std::string decode(const std::vector<int32_t> & tokens) const;
@@ -69,6 +75,7 @@ private:
     // Special token for "assistant" and newline
     int32_t assistant_token_id_ = 77091;
     int32_t newline_token_id_ = 198;  // '\n' encoded
+    int32_t user_token_id_ = -1;      // "user" token
     
     // Helper: convert bytes to unicode (GPT-2 style byte encoding)
     static std::string bytes_to_unicode(const std::string & text);

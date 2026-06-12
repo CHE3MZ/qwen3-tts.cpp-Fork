@@ -10,6 +10,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <unordered_set>
 #ifdef QWEN3_TTS_TIMING
 #include <chrono>
 #endif
@@ -96,6 +97,21 @@ struct tts_transformer_config {
     int32_t codec_think_eos_id = 2157;
 
     int32_t english_language_id = 2050;
+
+    // Model variant metadata (read from GGUF)
+    std::string model_type;   // "base", "custom_voice", "voice_design"
+    std::string model_size;   // "0.6b", "1.7b", etc.
+
+    // Named speaker table: speaker_name (lowercase) -> codec token ID
+    std::map<std::string, int32_t> spk_id;
+
+    // Dialect override: speaker_name (lowercase) -> dialect language name (lowercase)
+    // e.g. "speaker_cantonese" -> "cantonese"
+    // When set, the dialect's language_id overrides the requested language_id.
+    std::map<std::string, std::string> spk_is_dialect;
+
+    // Language name table: language_name (lowercase) -> codec token ID
+    std::map<std::string, int32_t> codec_language_id;
 };
 
 // Transformer layer weights
@@ -258,16 +274,51 @@ public:
     // speaker_embd: speaker embedding [hidden_size]
     // max_len: maximum number of frames to generate
     // output: generated speech codes [n_frames, n_codebooks]
+    // subtalker_* params control independent sampling for the code predictor sub-model
     bool generate(const int32_t * text_tokens, int32_t n_tokens,
                   const float * speaker_embd, int32_t max_len,
                   std::vector<int32_t> & output,
                   int32_t language_id = 2050,
                   float repetition_penalty = 1.05f,
                   float temperature = 0.9f,
-                  int32_t top_k = 50);
+                  int32_t top_k = 50,
+                  float subtalker_temperature = -1.0f,
+                  int32_t subtalker_top_k = -1,
+                  bool non_streaming_mode = false);
+
+    // Generate speech codes with ICL (In-Context Learning) voice cloning.
+    bool generate_icl(const int32_t * text_tokens, int32_t n_tokens,
+                      const float * speaker_embd,
+                      const int32_t * ref_text_tokens, int32_t n_ref_text_tokens,
+                      const int32_t * ref_codes, int32_t n_ref_frames,
+                      int32_t max_len,
+                      std::vector<int32_t> & output,
+                      int32_t language_id = 2050,
+                      float repetition_penalty = 1.05f,
+                      float temperature = 0.9f,
+                      int32_t top_k = 50,
+                      float subtalker_temperature = -1.0f,
+                      int32_t subtalker_top_k = -1,
+                      bool non_streaming_mode = false);
     
+    // Generate speech codes autoregressively using a pre-built prefill embedding.
+    // This is the common inner loop used by generate_icl() and the instruct path.
+    // prefill_embd: pre-built prefill [prefill_len * hidden_size]
+    // trailing_text_hidden: trailing text hidden states [(trailing_len) * hidden_size]
+    // tts_pad_embed: TTS pad embedding [hidden_size]
+    bool generate_from_prefill(const std::vector<float> & prefill_embd,
+                                const std::vector<float> & trailing_text_hidden,
+                                const std::vector<float> & tts_pad_embed,
+                                int32_t max_len,
+                                std::vector<int32_t> & output,
+                                float repetition_penalty = 1.05f,
+                                float temperature = 0.9f,
+                                int32_t top_k = 50,
+                                float subtalker_temperature = -1.0f,
+                                int32_t subtalker_top_k = -1);
+
     const tts_transformer_config & get_config() const { return model_.config; }
-    
+
     const std::string & get_error() const { return error_msg_; }
     
     // Legacy interface for compatibility
@@ -290,7 +341,27 @@ private:
                              const float * speaker_embd, int32_t language_id,
                              std::vector<float> & prefill_embd,
                              std::vector<float> & trailing_text_hidden,
-                             std::vector<float> & tts_pad_embed);
+                             std::vector<float> & tts_pad_embed,
+                             bool non_streaming_mode = false);
+
+    // Build prefill embedding for ICL mode (prepends ref text + ref codes)
+    bool build_prefill_graph_icl(const int32_t * text_tokens, int32_t n_tokens,
+                                  const float * speaker_embd, int32_t language_id,
+                                  const int32_t * ref_text_tokens, int32_t n_ref_text_tokens,
+                                  const int32_t * ref_codes, int32_t n_ref_frames,
+                                  std::vector<float> & prefill_embd,
+                                  std::vector<float> & trailing_text_hidden,
+                                  std::vector<float> & tts_pad_embed,
+                                  bool non_streaming_mode = false);
+
+    // Build prefill embedding for VoiceDesign / CustomVoice instruct modes.
+    // instruct_tokens: tokenised instruct text (may be nullptr/0 for no instruct)
+    bool build_prefill_graph_instruct(const int32_t * text_tokens, int32_t n_tokens,
+                                       const float * speaker_embd, int32_t language_id,
+                                       const int32_t * instruct_tokens, int32_t n_instruct_tokens,
+                                       std::vector<float> & prefill_embd,
+                                       std::vector<float> & trailing_text_hidden,
+                                       std::vector<float> & tts_pad_embed);
 
     struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
 

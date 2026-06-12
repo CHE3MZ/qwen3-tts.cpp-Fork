@@ -127,6 +127,29 @@ if(GGML_HAS_METAL)
     target_link_libraries(audio_tokenizer_encoder PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
 endif()
 
+# Mimi audio encoder library (CPU-based, for ICL voice cloning)
+add_library(mimi_encoder STATIC
+    src/mimi_encoder.cpp
+    src/gguf_loader.cpp
+)
+target_include_directories(mimi_encoder PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GGML_DIR}/include
+)
+target_link_directories(mimi_encoder PUBLIC
+    ${GGML_BUILD_DIR}/src
+    ${GGML_BUILD_DIR}/src/ggml-metal
+)
+target_link_libraries(mimi_encoder PUBLIC
+    ggml
+    ggml-base
+    ggml-cpu
+    Threads::Threads
+)
+if(GGML_HAS_METAL)
+    target_link_libraries(mimi_encoder PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
+endif()
+
 # Audio tokenizer decoder library (GGML-based)
 add_library(audio_tokenizer_decoder STATIC
     src/audio_tokenizer_decoder.cpp
@@ -162,6 +185,7 @@ target_link_libraries(qwen3_tts PUBLIC
     text_tokenizer
     tts_transformer
     audio_tokenizer_encoder
+    mimi_encoder
     audio_tokenizer_decoder
     Threads::Threads
 )
@@ -239,6 +263,7 @@ install(FILES
     src/coreml_code_predictor.h
     src/audio_tokenizer_encoder.h
     src/audio_tokenizer_decoder.h
+    src/mimi_encoder.h
     src/qwen3_tts.h
     src/qwen3tts_c_api.h
     DESTINATION include

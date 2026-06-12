@@ -8,6 +8,10 @@ C++ inference for [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Ba
 
 Runs the full TTS pipeline in pure C++17, including text tokenization, speaker encoding, transformer code generation, and vocoder decoding, without Python or PyTorch at inference time.
 
+# NOTE : 
+
+this version of the TTS.cpp is a fork and introduces lots of features not present in the previous builds , you __MUST__ run the updated PY scripts to convert the models tensors to the GGUF that is compatible with this version of the engine , the new script contains support for a mimi encoder for voice cloning which is why you need to run it in order for it to work correctly.
+
 ## Features
 
 - Full text-to-speech pipeline in C++17 with GGML backend

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Convert HuggingFace Qwen3-TTS-12Hz-0.6B-Base model to GGUF format.
+Convert HuggingFace Qwen3-TTS model to GGUF format.
+Supports all model variants: Base, CustomVoice, VoiceDesign; sizes 0.6B and 1.7B.
 
 Usage:
     python scripts/convert_tts_to_gguf.py \
-        --input models/Qwen3-TTS-12Hz-0.6B-Base \
-        --output models/qwen3-tts-0.6b-f16.gguf \
+        --input models/Qwen3-TTS-12Hz-1.7B-Base \
+        --output models/qwen3-tts-1.7b-f16.gguf \
         --type f16
 """
 
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3TTSConverter:
-    """Converter for Qwen3-TTS-12Hz-0.6B-Base model to GGUF format."""
+    """Converter for Qwen3-TTS models (0.6B/1.7B, Base/CustomVoice/VoiceDesign) to GGUF format."""
 
     # Direct tensor name mapping from HuggingFace to GGML conventions
     TENSOR_MAP = {
@@ -187,8 +188,30 @@ class Qwen3TTSConverter:
         self.codec_bos_id = talker_config.get("codec_bos_id", 2149)
         self.codec_eos_id = talker_config.get("codec_eos_token_id", 2150)
 
-        # Model name
-        self.model_name = "Qwen3-TTS-12Hz-0.6B"
+        # Think tokens
+        self.codec_think_id     = talker_config.get("codec_think_id",     2154)
+        self.codec_nothink_id   = talker_config.get("codec_nothink_id",   2155)
+        self.codec_think_bos_id = talker_config.get("codec_think_bos_id", 2156)
+        self.codec_think_eos_id = talker_config.get("codec_think_eos_id", 2157)
+
+        # Model type / size from config (present in CustomVoice / VoiceDesign)
+        self.tts_model_type = self.config.get("tts_model_type", "base") or "base"
+        self.tts_model_size = self.config.get("tts_model_size", "") or ""
+
+        # Named speaker table: {name: codec_token_id}
+        self.spk_id: dict = talker_config.get("spk_id", {}) or {}
+
+        # Language table: {language_name: codec_token_id}
+        self.codec_language_id: dict = talker_config.get("codec_language_id", {}) or {}
+
+        # spk_is_dialect table: {speaker_name: dialect_language_name or False}
+        self.spk_is_dialect: dict = talker_config.get("spk_is_dialect", {}) or {}
+
+        # Determine model name
+        if self.tts_model_size:
+            self.model_name = f"Qwen3-TTS-12Hz-{self.tts_model_size.upper()}"
+        else:
+            self.model_name = "Qwen3-TTS-12Hz"
 
     def _map_tensor_name(self, hf_name: str) -> str | None:
         """Map HuggingFace tensor name to GGML convention."""
@@ -470,6 +493,49 @@ class Qwen3TTSConverter:
         writer.add_uint32(f"{arch}.codec.bos_id", self.codec_bos_id)
         writer.add_uint32(f"{arch}.codec.eos_id", self.codec_eos_id)
 
+        # Think / nothink tokens
+        writer.add_uint32(f"{arch}.codec.think_id",     self.codec_think_id)
+        writer.add_uint32(f"{arch}.codec.nothink_id",   self.codec_nothink_id)
+        writer.add_uint32(f"{arch}.codec.think_bos_id", self.codec_think_bos_id)
+        writer.add_uint32(f"{arch}.codec.think_eos_id", self.codec_think_eos_id)
+
+        # Model variant metadata
+        if self.tts_model_type:
+            writer.add_string(f"{arch}.model_type", self.tts_model_type)
+        if self.tts_model_size:
+            writer.add_string(f"{arch}.model_size", self.tts_model_size)
+
+        # Speaker table
+        if self.spk_id:
+            names = list(self.spk_id.keys())
+            ids   = [int(self.spk_id[n]) for n in names]
+            writer.add_array(f"{arch}.speakers.names", names)
+            writer.add_array(f"{arch}.speakers.ids",   ids)
+            logger.info(f"  Speaker table: {len(names)} entries")
+
+        # spk_is_dialect table
+        if self.spk_is_dialect:
+            dialect_spk_names  = []
+            dialect_lang_names = []
+            for spk, lang in self.spk_is_dialect.items():
+                # Python stores False for non-dialect speakers; skip those
+                if lang is False or lang == "false" or lang == "":
+                    continue
+                dialect_spk_names.append(str(spk))
+                dialect_lang_names.append(str(lang))
+            if dialect_spk_names:
+                writer.add_array(f"{arch}.speakers.dialect_names", dialect_spk_names)
+                writer.add_array(f"{arch}.speakers.dialect_langs", dialect_lang_names)
+                logger.info(f"  Dialect table: {len(dialect_spk_names)} entries")
+
+        # Language table
+        if self.codec_language_id:
+            lang_names = list(self.codec_language_id.keys())
+            lang_ids   = [int(self.codec_language_id[n]) for n in lang_names]
+            writer.add_array(f"{arch}.languages.names", lang_names)
+            writer.add_array(f"{arch}.languages.ids",   lang_ids)
+            logger.info(f"  Language table: {len(lang_names)} entries")
+
         logger.info("Added model metadata")
 
     def _add_tokenizer(self, writer: gguf.GGUFWriter) -> None:
@@ -526,7 +592,7 @@ class Qwen3TTSConverter:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert Qwen3-TTS-12Hz-0.6B-Base model to GGUF format"
+        description="Convert Qwen3-TTS model to GGUF format (supports 0.6B/1.7B, Base/CustomVoice/VoiceDesign)"
     )
     parser.add_argument(
         "--input", "-i",

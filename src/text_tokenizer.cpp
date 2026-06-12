@@ -153,13 +153,19 @@ bool TextTokenizer::load_from_gguf(struct gguf_context * ctx) {
         // Try with space prefix (GPT-2 style)
         assistant_token_id_ = find_token("Ġassistant");
     }
-    
+
     // Newline token
     newline_token_id_ = find_token("Ċ");  // GPT-2 encoding for '\n'
     if (newline_token_id_ < 0) {
         newline_token_id_ = find_token("\n");
     }
-    
+
+    // User token (for instruct formatting)
+    user_token_id_ = find_token("user");
+    if (user_token_id_ < 0) {
+        user_token_id_ = find_token("Ġuser");
+    }
+
     loaded_ = true;
     return true;
 }
@@ -346,6 +352,43 @@ std::string TextTokenizer::decode_token(int32_t token_id) const {
     
     // Convert from GPT-2 unicode back to bytes
     return unicode_to_bytes(token);
+}
+
+// <|im_start|>assistant\n{text}<|im_end|>\n
+// (reference transcript format — no trailing <|im_start|>assistant\n)
+std::vector<int32_t> TextTokenizer::encode_ref_text(const std::string & text) const {
+    if (!loaded_) return {};
+
+    std::vector<int32_t> tokens;
+    tokens.push_back(config_.bos_token_id);   // <|im_start|>
+    tokens.push_back(assistant_token_id_);
+    tokens.push_back(newline_token_id_);
+
+    auto text_tokens = encode(text);
+    tokens.insert(tokens.end(), text_tokens.begin(), text_tokens.end());
+
+    tokens.push_back(config_.eos_token_id);   // <|im_end|>
+    tokens.push_back(newline_token_id_);
+    return tokens;
+}
+
+// <|im_start|>user\n{instruct}<|im_end|>\n
+std::vector<int32_t> TextTokenizer::encode_instruct(const std::string & instruct) const {
+    if (!loaded_) return {};
+
+    std::vector<int32_t> tokens;
+    tokens.push_back(config_.bos_token_id);   // <|im_start|>
+    if (user_token_id_ >= 0) {
+        tokens.push_back(user_token_id_);
+    }
+    tokens.push_back(newline_token_id_);
+
+    auto text_tokens = encode(instruct);
+    tokens.insert(tokens.end(), text_tokens.begin(), text_tokens.end());
+
+    tokens.push_back(config_.eos_token_id);   // <|im_end|>
+    tokens.push_back(newline_token_id_);
+    return tokens;
 }
 
 } // namespace qwen3_tts

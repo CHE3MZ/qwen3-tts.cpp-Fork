@@ -43,14 +43,14 @@ class Qwen3TTSTokenizerConverter:
 
     # Direct tensor name mappings
     TENSOR_MAP = {
-        # Encoder - downsample conv
-        "encoder.downsample.conv.weight": "tok_enc.downsample.weight",
-        
-        # Encoder quantizer projections
-        "encoder.quantizer.acoustic_residual_vector_quantizer.input_proj.weight": "tok_enc.vq_acoustic.input_proj.weight",
-        "encoder.quantizer.acoustic_residual_vector_quantizer.output_proj.weight": "tok_enc.vq_acoustic.output_proj.weight",
-        "encoder.quantizer.semantic_residual_vector_quantizer.input_proj.weight": "tok_enc.vq_semantic.input_proj.weight",
-        "encoder.quantizer.semantic_residual_vector_quantizer.output_proj.weight": "tok_enc.vq_semantic.output_proj.weight",
+        # Mimi encoder - downsample conv (no bias in this model)
+        "encoder.downsample.conv.weight": "mimi_enc.downsample.conv.weight",
+
+        # Mimi encoder - RVQ projection weights
+        "encoder.quantizer.acoustic_residual_vector_quantizer.input_proj.weight":  "mimi_enc.rvq_acou.input_proj.weight",
+        "encoder.quantizer.acoustic_residual_vector_quantizer.output_proj.weight": "mimi_enc.rvq_acou.output_proj.weight",
+        "encoder.quantizer.semantic_residual_vector_quantizer.input_proj.weight":  "mimi_enc.rvq_sem.input_proj.weight",
+        "encoder.quantizer.semantic_residual_vector_quantizer.output_proj.weight": "mimi_enc.rvq_sem.output_proj.weight",
         
         # Decoder pre-conv and output
         "decoder.pre_conv.conv.bias": "tok_dec.pre_conv.bias",
@@ -83,36 +83,37 @@ class Qwen3TTSTokenizerConverter:
     # Regex patterns for layer-specific tensors
     ENCODER_PATTERNS = [
         # Encoder conv layers (various indices)
-        (r"encoder\.encoder\.layers\.(\d+)\.conv\.weight", "tok_enc.conv.{}.weight"),
-        (r"encoder\.encoder\.layers\.(\d+)\.conv\.bias", "tok_enc.conv.{}.bias"),
-        
-        # Encoder residual blocks
-        (r"encoder\.encoder\.layers\.(\d+)\.block\.(\d+)\.conv\.weight", "tok_enc.res.{}.blk.{}.weight"),
-        (r"encoder\.encoder\.layers\.(\d+)\.block\.(\d+)\.conv\.bias", "tok_enc.res.{}.blk.{}.bias"),
-        
+        (r"encoder\.encoder\.layers\.(\d+)\.conv\.weight", "mimi_enc.enc.{}.conv.weight"),
+        (r"encoder\.encoder\.layers\.(\d+)\.conv\.bias",   "mimi_enc.enc.{}.conv.bias"),
+
+        # Encoder residual blocks: block.1 = compressed conv, block.3 = expand conv
+        (r"encoder\.encoder\.layers\.(\d+)\.block\.(\d+)\.conv\.weight", "mimi_enc.enc.{}.block.{}.conv.weight"),
+        (r"encoder\.encoder\.layers\.(\d+)\.block\.(\d+)\.conv\.bias",   "mimi_enc.enc.{}.block.{}.conv.bias"),
+
         # Encoder transformer layers
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.input_layernorm\.weight", "tok_enc.blk.{}.attn_norm.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.input_layernorm\.bias", "tok_enc.blk.{}.attn_norm.bias"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.post_attention_layernorm\.weight", "tok_enc.blk.{}.ffn_norm.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.post_attention_layernorm\.bias", "tok_enc.blk.{}.ffn_norm.bias"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.q_proj\.weight", "tok_enc.blk.{}.attn_q.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.k_proj\.weight", "tok_enc.blk.{}.attn_k.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.v_proj\.weight", "tok_enc.blk.{}.attn_v.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.o_proj\.weight", "tok_enc.blk.{}.attn_output.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn_layer_scale\.scale", "tok_enc.blk.{}.attn_scale"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp\.fc1\.weight", "tok_enc.blk.{}.ffn_up.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp\.fc2\.weight", "tok_enc.blk.{}.ffn_down.weight"),
-        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp_layer_scale\.scale", "tok_enc.blk.{}.ffn_scale"),
-        
-        # Encoder acoustic quantizer codebooks (embed_sum is the actual codebook)
-        (r"encoder\.quantizer\.acoustic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.embed_sum", "tok_enc.vq_acoustic.{}.codebook"),
-        (r"encoder\.quantizer\.acoustic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.cluster_usage", "tok_enc.vq_acoustic.{}.usage"),
-        (r"encoder\.quantizer\.acoustic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.initialized", "tok_enc.vq_acoustic.{}.initialized"),
-        
-        # Encoder semantic quantizer codebooks
-        (r"encoder\.quantizer\.semantic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.embed_sum", "tok_enc.vq_semantic.{}.codebook"),
-        (r"encoder\.quantizer\.semantic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.cluster_usage", "tok_enc.vq_semantic.{}.usage"),
-        (r"encoder\.quantizer\.semantic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.initialized", "tok_enc.vq_semantic.{}.initialized"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.input_layernorm\.weight",          "mimi_enc.tfm.{}.attn_in_norm.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.input_layernorm\.bias",            "mimi_enc.tfm.{}.attn_in_norm.bias"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.post_attention_layernorm\.weight", "mimi_enc.tfm.{}.ffn_in_norm.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.post_attention_layernorm\.bias",   "mimi_enc.tfm.{}.ffn_in_norm.bias"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.q_proj\.weight",        "mimi_enc.tfm.{}.attn_q.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.k_proj\.weight",        "mimi_enc.tfm.{}.attn_k.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.v_proj\.weight",        "mimi_enc.tfm.{}.attn_v.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn\.o_proj\.weight",        "mimi_enc.tfm.{}.attn_o.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.self_attn_layer_scale\.scale",     "mimi_enc.tfm.{}.attn_scale"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp\.fc1\.weight",                 "mimi_enc.tfm.{}.ffn_fc1.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp\.fc2\.weight",                 "mimi_enc.tfm.{}.ffn_fc2.weight"),
+        (r"encoder\.encoder_transformer\.layers\.(\d+)\.mlp_layer_scale\.scale",           "mimi_enc.tfm.{}.ffn_scale"),
+
+        # Encoder downsample conv
+        # (handled in TENSOR_MAP)
+
+        # Encoder acoustic RVQ codebooks
+        (r"encoder\.quantizer\.acoustic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.embed_sum",     "mimi_enc.rvq_acou.cb.{}.embed_sum"),
+        (r"encoder\.quantizer\.acoustic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.cluster_usage", "mimi_enc.rvq_acou.cb.{}.cluster_usage"),
+
+        # Encoder semantic RVQ codebooks
+        (r"encoder\.quantizer\.semantic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.embed_sum",     "mimi_enc.rvq_sem.cb.{}.embed_sum"),
+        (r"encoder\.quantizer\.semantic_residual_vector_quantizer\.layers\.(\d+)\.codebook\.cluster_usage", "mimi_enc.rvq_sem.cb.{}.cluster_usage"),
     ]
 
     DECODER_PATTERNS = [
@@ -413,13 +414,36 @@ class Qwen3TTSTokenizerConverter:
         writer.add_uint32(f"{arch}.sample_rate", self.sample_rate)
         writer.add_float32(f"{arch}.frame_rate", self.frame_rate)
         
-        # Encoder parameters
+        # Encoder parameters (existing)
         writer.add_uint32(f"{arch}.encoder.hidden_size", self.encoder_hidden_size)
         writer.add_uint32(f"{arch}.encoder.num_layers", self.encoder_num_layers)
         writer.add_uint32(f"{arch}.encoder.num_heads", self.encoder_num_heads)
         writer.add_uint32(f"{arch}.encoder.num_quantizers", self.encoder_num_quantizers)
         writer.add_uint32(f"{arch}.encoder.valid_quantizers", self.encoder_valid_quantizers)
         writer.add_uint32(f"{arch}.encoder.codebook_dim", self.encoder_codebook_dim)
+
+        # Mimi encoder config — read by C++ MimiEncoder::load_model()
+        enc_cfg = self.config.get("encoder_config", {})
+        writer.add_uint32("mimi.hidden_size",            enc_cfg.get("hidden_size", 512))
+        writer.add_uint32("mimi.num_filters",            enc_cfg.get("num_filters", 64))
+        writer.add_uint32("mimi.num_hidden_layers",      enc_cfg.get("num_hidden_layers", 8))
+        writer.add_uint32("mimi.num_attention_heads",    enc_cfg.get("num_attention_heads", 8))
+        writer.add_uint32("mimi.num_key_value_heads",    enc_cfg.get("num_key_value_heads", 8))
+        writer.add_uint32("mimi.head_dim",               enc_cfg.get("head_dim", 64))
+        writer.add_uint32("mimi.intermediate_size",      enc_cfg.get("intermediate_size", 2048))
+        writer.add_uint32("mimi.sliding_window",         enc_cfg.get("sliding_window", 250))
+        writer.add_float32("mimi.rope_theta",            enc_cfg.get("rope_theta", 10000.0))
+        writer.add_float32("mimi.norm_eps",              enc_cfg.get("norm_eps", 1e-5))
+        writer.add_uint32("mimi.num_quantizers",         enc_cfg.get("num_quantizers", 32))
+        writer.add_uint32("mimi.num_semantic_quantizers", enc_cfg.get("num_semantic_quantizers", 1))
+        writer.add_uint32("mimi.codebook_size",          enc_cfg.get("codebook_size", 2048))
+        writer.add_uint32("mimi.codebook_dim",           enc_cfg.get("codebook_dim", 256))
+        writer.add_uint32("mimi.vq_hidden_dim",
+                          enc_cfg.get("vector_quantization_hidden_dimension", 256))
+        # upsampling ratios as array (decoder order: [8,6,5,4])
+        upsampling_ratios = enc_cfg.get("upsampling_ratios", [8, 6, 5, 4])
+        writer.add_array("mimi.upsampling_ratios", upsampling_ratios)
+        logger.info("  Added Mimi encoder metadata")
         
         # Decoder parameters
         writer.add_uint32(f"{arch}.decoder.hidden_size", self.decoder_hidden_size)

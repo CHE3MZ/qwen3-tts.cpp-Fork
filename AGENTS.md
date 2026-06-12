@@ -6,6 +6,11 @@ Coding conventions and architecture guide for AI agents working on this codebase
 
 `qwen3-tts.cpp` is a pure C++17 implementation of the Qwen3-TTS text-to-speech pipeline using GGML. It converts text to speech through four stages: tokenization, speaker encoding, transformer code generation, and vocoder decoding.
 
+The implementation supports all three model variants and both model sizes from the Python reference:
+- **Base model** (0.6B / 1.7B): voice cloning via ECAPA-TDNN x-vector speaker embedding
+- **CustomVoice model** (0.6B / 1.7B): named speaker selection + optional emotion/style instruct text
+- **VoiceDesign model** (0.6B / 1.7B): free-form natural-language voice description
+
 ## Repository Structure
 
 ```
@@ -127,14 +132,18 @@ This structure must mirror the Python pipeline exactly.
 tts_bos = 151672, tts_eos = 151673, tts_pad = 151671
 codec_bos = 2149, codec_eos = 2150, codec_pad = 2148
 codec_think = 2154, codec_think_bos = 2156, codec_think_eos = 2157
+codec_nothink = 2155
 english_language_id = 2050
 ```
 
+These are defaults for the 0.6B-Base model. The converter now writes all token IDs and the speaker/language tables to GGUF, so they are read from the file at runtime.
+
 ### Key Files to Understand
 
-- `tts_transformer.cpp` — The core file (~2300 lines). Contains `generate()`, `forward_prefill()`, `forward_step()`, `predict_codes_autoregressive()`, and all graph builders.
-- `qwen3_tts.cpp` — Pipeline orchestration. Calls tokenizer, encoder, transformer, decoder in sequence.
-- `CMakeLists.txt` — Build configuration. Each component is a separate static library.
+- `tts_transformer.cpp` — Core file (~3400 lines). Contains `generate()`, `generate_icl()`, `generate_from_prefill()`, `build_prefill_graph()`, `build_prefill_graph_icl()`, `build_prefill_graph_instruct()`, `forward_prefill()`, `forward_step()`, `predict_codes_autoregressive()`, and all GGML graph builders.
+- `qwen3_tts.cpp` — Pipeline orchestration (~900 lines). Dispatches to the right synthesis path based on model type (base/custom_voice/voice_design). Handles model discovery, generation_config.json loading, and all public APIs.
+- `text_tokenizer.cpp` — BPE tokenizer with `encode_for_tts()`, `encode_ref_text()`, `encode_instruct()`.
+- `CMakeLists.txt` — Build configuration.
 
 ## Testing
 
@@ -166,7 +175,9 @@ bash scripts/run_all_tests.sh           # Full suite
 
 - F16 model weights cause autoregressive divergence vs Python's float32 — speech codes differ but audio is perceptually equivalent
 - M-RoPE uses 1D positions (equivalent for single-batch, may differ for batched inference)
-- `--top-p` is parsed in CLI params but currently not used in transformer sampling
+- **Batch inference not implemented** — C++ processes one utterance at a time; Python supports batches
+- **ICL voice cloning (full)** — x-vector speaker embedding works; the discrete reference-code ICL path requires a Mimi audio encoder GGUF which is not yet implemented in C++. The `generate_icl()` function on `TTSTransformer` accepts reference codes when available externally.
+- `--top-p` is parsed in CLI params but not used in sampling (top-k only is applied)
 - Top-level CMake expects vendored GGML at `./ggml`
 
 ## Performance Profile
