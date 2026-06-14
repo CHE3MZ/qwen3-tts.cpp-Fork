@@ -15,6 +15,14 @@
 
 namespace qwen3_tts {
 
+// KV cache element type: F16 (default, half RAM) or F32 (bit-exact, 2× RAM).
+// Controlled by -DQWEN3_TTS_KV_F32 compile flag.
+#ifdef QWEN3_TTS_KV_F32
+static constexpr ggml_type QWEN3_TTS_KV_TYPE = GGML_TYPE_F32;
+#else
+static constexpr ggml_type QWEN3_TTS_KV_TYPE = GGML_TYPE_F16;
+#endif
+
 TTSTransformer::TTSTransformer() = default;
 
 TTSTransformer::~TTSTransformer() {
@@ -806,12 +814,12 @@ bool TTSTransformer::init_kv_cache(int32_t n_ctx) {
     
     for (int il = 0; il < cfg.n_layers; ++il) {
         state_.cache.k_cache[il] = ggml_new_tensor_3d(
-            state_.cache.ctx, GGML_TYPE_F16,
+            state_.cache.ctx, QWEN3_TTS_KV_TYPE,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.cache.k_cache[il], "k_cache_%d", il);
         
         state_.cache.v_cache[il] = ggml_new_tensor_3d(
-            state_.cache.ctx, GGML_TYPE_F16,
+            state_.cache.ctx, QWEN3_TTS_KV_TYPE,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.cache.v_cache[il], "v_cache_%d", il);
     }
@@ -860,12 +868,12 @@ bool TTSTransformer::init_code_pred_kv_cache(int32_t n_ctx) {
     
     for (int il = 0; il < cfg.code_pred_layers; ++il) {
         state_.code_pred_cache.k_cache[il] = ggml_new_tensor_3d(
-            state_.code_pred_cache.ctx, GGML_TYPE_F16,
+            state_.code_pred_cache.ctx, QWEN3_TTS_KV_TYPE,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.code_pred_cache.k_cache[il], "code_pred_k_cache_%d", il);
         
         state_.code_pred_cache.v_cache[il] = ggml_new_tensor_3d(
-            state_.code_pred_cache.ctx, GGML_TYPE_F16,
+            state_.code_pred_cache.ctx, QWEN3_TTS_KV_TYPE,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.code_pred_cache.v_cache[il], "code_pred_v_cache_%d", il);
     }

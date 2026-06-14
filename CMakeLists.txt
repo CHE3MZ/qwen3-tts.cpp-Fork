@@ -20,6 +20,17 @@ elseif(MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /fp:fast")
 endif()
 
+# KV cache precision option
+# F32 KV cache gives bit-exact non-streaming output matching Python float32 inference.
+# F16 (default) uses half the memory but may differ by 1 frame at EOS boundary.
+option(QWEN3_TTS_KV_F32 "Use F32 KV cache for bit-exact non-streaming output (2× RAM)" OFF)
+if(QWEN3_TTS_KV_F32)
+    add_compile_definitions(QWEN3_TTS_KV_F32)
+    message(STATUS "KV cache: F32 (bit-exact mode, 2× RAM)")
+else()
+    message(STATUS "KV cache: F16 (default, half RAM)")
+endif()
+
 # Timing instrumentation option
 option(QWEN3_TTS_TIMING "Enable detailed timing instrumentation" OFF)
 if(QWEN3_TTS_TIMING)

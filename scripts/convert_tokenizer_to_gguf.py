@@ -171,10 +171,16 @@ class Qwen3TTSTokenizerConverter:
         input_dir: Path,
         output_path: Path,
         output_type: str = "f16",
+        mimi_type: str | None = None,
     ):
         self.input_dir = input_dir
         self.output_path = output_path
         self.output_type = output_type
+        # mimi_type controls precision for Mimi encoder weights (mimi_enc.*).
+        # None = same as output_type (backward-compatible default).
+        # Set to "f32" for bit-exact ICL encoding, "q8_0" for smallest size.
+        # Codebook embeddings always stay F32 regardless of mimi_type.
+        self.mimi_type = mimi_type if mimi_type is not None else output_type
 
         # Load config
         self.config = self._load_config()
@@ -267,7 +273,14 @@ class Qwen3TTSTokenizerConverter:
                     yield name, f.get_tensor(name)
 
     def _convert_dtype(self, tensor: torch.Tensor, tensor_name: str = "") -> tuple[np.ndarray, gguf.GGMLQuantizationType]:
-        """Convert tensor to appropriate dtype for GGUF."""
+        """Convert tensor to appropriate dtype for GGUF.
+
+        Precision rules (in priority order):
+        1. 1D tensors (biases, norms, scales) → always F32
+        2. Codebook embeddings (embed_sum) → always F32 for exact nearest-neighbor lookup
+        3. Mimi encoder tensors (mimi_enc.*) → use self.mimi_type
+        4. All other tensors → use self.output_type
+        """
         if tensor.dtype == torch.bfloat16:
             data = tensor.float().numpy()
         else:
@@ -275,20 +288,27 @@ class Qwen3TTSTokenizerConverter:
 
         n_dims = len(data.shape)
 
-        # 1D tensors (norms, biases, scales) should be F32
+        # Rule 1: 1D tensors always F32
         if n_dims <= 1:
             return data.astype(np.float32), gguf.GGMLQuantizationType.F32
 
-        # For 2D+ tensors, use the specified output type
-        if self.output_type == "f32":
+        # Rule 2: Codebook embeddings always F32 (exact nearest-neighbor lookup required)
+        if "embed_sum" in tensor_name or "embedding_sum" in tensor_name:
             return data.astype(np.float32), gguf.GGMLQuantizationType.F32
-        elif self.output_type == "f16":
+
+        # Determine effective type for this tensor
+        is_mimi = tensor_name.startswith("mimi_enc.")
+        effective_type = self.mimi_type if is_mimi else self.output_type
+
+        # Rule 3/4: apply effective type
+        if effective_type == "f32":
+            return data.astype(np.float32), gguf.GGMLQuantizationType.F32
+        elif effective_type == "f16":
             return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q8_0":
-            # Keep some tensors in F16 for quality (codebooks, norms)
-            if any(x in tensor_name for x in ["codebook", "_norm", "norm.", "scale", "alpha", "beta"]):
+        elif effective_type == "q8_0":
+            # Keep norm/scale/activation tensors in F16 for quality
+            if any(x in tensor_name for x in ["_norm", "norm.", "scale", "alpha", "beta"]):
                 return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-            
             data = data.astype(np.float32)
             try:
                 quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q8_0)
@@ -451,6 +471,7 @@ class Qwen3TTSTokenizerConverter:
         upsampling_ratios = enc_cfg.get("upsampling_ratios", [8, 6, 5, 4])
         writer.add_array("mimi.upsampling_ratios", upsampling_ratios)
         logger.info("  Added Mimi encoder metadata")
+        logger.info(f"  Mimi encoder weight type: {self.mimi_type} (vocoder type: {self.output_type})")
         
         # Decoder parameters
         writer.add_uint32(f"{arch}.decoder.hidden_size", self.decoder_hidden_size)
@@ -486,7 +507,19 @@ def main():
         "--type", "-t",
         choices=["f16", "f32", "q8_0"],
         default="f16",
-        help="Output data type (default: f16)"
+        help="Output data type for vocoder decoder weights (default: f16)"
+    )
+    parser.add_argument(
+        "--mimi-type",
+        choices=["f16", "f32", "q8_0"],
+        default=None,
+        help=(
+            "Precision for Mimi encoder weights (mimi_enc.*). "
+            "Default: same as --type. "
+            "Use 'f32' for bit-exact ICL voice cloning (100%% match vs Python). "
+            "Use 'q8_0' for smallest file size (~250MB) with near-exact accuracy. "
+            "Codebook embeddings are always F32 regardless of this setting."
+        )
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -503,6 +536,7 @@ def main():
         input_dir=args.input,
         output_path=args.output,
         output_type=args.type,
+        mimi_type=args.mimi_type,
     )
     converter.convert()
 
