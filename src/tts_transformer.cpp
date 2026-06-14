@@ -2876,7 +2876,8 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
                                float top_p,
                                float subtalker_temperature,
                                int32_t subtalker_top_k,
-                               bool non_streaming_mode) {
+                               bool non_streaming_mode,
+                               float subtalker_top_p) {
 #ifdef QWEN3_TTS_TIMING
     using clk = std::chrono::high_resolution_clock;
     tts_timing timing = {};
@@ -2907,6 +2908,7 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     // Resolve subtalker sampling parameters (-1 means inherit from main talker)
     const float sub_temp = (subtalker_temperature < 0.0f) ? temperature : subtalker_temperature;
     const int32_t sub_top_k = (subtalker_top_k < 0) ? top_k : subtalker_top_k;
+    const float sub_top_p = (subtalker_top_p < 0.0f) ? top_p : subtalker_top_p;
 
     std::vector<float> prefill_embd;
     std::vector<float> trailing_text_hidden;
@@ -2979,7 +2981,7 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         t0 = clk::now();
 #endif
         std::vector<int32_t> codes_1_15;
-        if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0], codes_1_15, sub_temp, sub_top_k, top_p)) {
+        if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0], codes_1_15, sub_temp, sub_top_k, sub_top_p)) {
             return false;
         }
 #ifdef QWEN3_TTS_TIMING
@@ -3302,7 +3304,8 @@ bool TTSTransformer::generate_icl(
         float   top_p,
         float   subtalker_temperature,
         int32_t subtalker_top_k,
-        bool    non_streaming_mode) {
+        bool    non_streaming_mode,
+        float   subtalker_top_p) {
 
     if (!model_.ctx) { error_msg_ = "Model not loaded"; return false; }
     if (!text_tokens || n_tokens < 4) {
@@ -3314,6 +3317,7 @@ bool TTSTransformer::generate_icl(
     const auto & cfg     = model_.config;
     const float  sub_temp  = (subtalker_temperature < 0.0f) ? temperature  : subtalker_temperature;
     const int32_t sub_topk = (subtalker_top_k       < 0)    ? top_k        : subtalker_top_k;
+    const float  sub_topp  = (subtalker_top_p        < 0.0f) ? top_p       : subtalker_top_p;
 
     std::vector<float> prefill_embd, trailing_text_hidden, tts_pad_embed;
 
@@ -3363,7 +3367,7 @@ bool TTSTransformer::generate_icl(
 
         std::vector<int32_t> codes_1_15;
         if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0],
-                                           codes_1_15, sub_temp, sub_topk, top_p)) {
+                                           codes_1_15, sub_temp, sub_topk, sub_topp)) {
             return false;
         }
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) frame_codes[cb] = codes_1_15[cb - 1];
@@ -3406,7 +3410,8 @@ bool TTSTransformer::generate_from_prefill(
         int32_t top_k,
         float top_p,
         float subtalker_temperature,
-        int32_t subtalker_top_k) {
+        int32_t subtalker_top_k,
+        float subtalker_top_p) {
 
     if (!model_.ctx) { error_msg_ = "Model not loaded"; return false; }
     if (max_len <= 0) { output.clear(); return true; }
@@ -3415,6 +3420,7 @@ bool TTSTransformer::generate_from_prefill(
     const int32_t H       = cfg.hidden_size;
     const float  sub_temp  = (subtalker_temperature < 0.0f) ? temperature : subtalker_temperature;
     const int32_t sub_topk = (subtalker_top_k < 0) ? top_k : subtalker_top_k;
+    const float  sub_topp  = (subtalker_top_p < 0.0f) ? top_p : subtalker_top_p;
 
     const int32_t prefill_len  = (int32_t)(prefill_embd.size()        / H);
     const int32_t trailing_len = (int32_t)(trailing_text_hidden.size() / H);
@@ -3457,7 +3463,7 @@ bool TTSTransformer::generate_from_prefill(
         // Predict CB1-15
         std::vector<int32_t> codes_1_15;
         if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0],
-                                           codes_1_15, sub_temp, sub_topk, top_p)) {
+                                           codes_1_15, sub_temp, sub_topk, sub_topp)) {
             return false;
         }
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) frame_codes[cb] = codes_1_15[cb-1];

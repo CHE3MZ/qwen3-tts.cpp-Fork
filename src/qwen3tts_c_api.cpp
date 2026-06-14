@@ -46,6 +46,7 @@ static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p) {
     out.repetition_penalty   = p->repetition_penalty;
     out.subtalker_temperature = p->subtalker_temperature;
     out.subtalker_top_k      = p->subtalker_top_k;
+    out.subtalker_top_p      = p->subtalker_top_p;
     out.icl_mode             = (p->icl_mode != 0);
     out.non_streaming_mode   = (p->non_streaming_mode != 0);
 
@@ -89,6 +90,7 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
     p->language_id           = 2050;
     p->subtalker_temperature = -1.0f;
     p->subtalker_top_k       = -1;
+    p->subtalker_top_p       = -1.0f;
     p->icl_mode              = 0;
     p->non_streaming_mode    = 0;
     std::strncpy(p->language_name, "auto", sizeof(p->language_name) - 1);

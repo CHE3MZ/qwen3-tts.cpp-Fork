@@ -676,7 +676,8 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                     params.repetition_penalty,
                     params.temperature, params.top_k, params.top_p,
                     params.subtalker_temperature, params.subtalker_top_k,
-                    params.non_streaming_mode);
+                    params.non_streaming_mode,
+                    params.subtalker_top_p);
 
                 result.t_generate_ms = get_time_ms() - t_gen;
 
@@ -949,7 +950,8 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
                 params.max_audio_tokens, speech_codes,
                 params.repetition_penalty,
                 params.temperature, params.top_k, params.top_p,
-                params.subtalker_temperature, params.subtalker_top_k);
+                params.subtalker_temperature, params.subtalker_top_k,
+                params.subtalker_top_p);
         }
         if (!gen_ok) {
             result.error_msg = "Instruct code generation failed: " + transformer_.get_error();
@@ -965,7 +967,8 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
             params.repetition_penalty,
             params.temperature, params.top_k, params.top_p,
             params.subtalker_temperature, params.subtalker_top_k,
-            params.non_streaming_mode);
+            params.non_streaming_mode,
+            params.subtalker_top_p);
     }
 
     if (!gen_ok) {

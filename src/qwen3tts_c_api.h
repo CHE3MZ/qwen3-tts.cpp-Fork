@@ -26,6 +26,7 @@ typedef struct Qwen3TtsParams {
      * -1.0f / -1 means inherit from main temperature/top_k.            */
     float   subtalker_temperature;  /* default: -1.0 (inherit)           */
     int32_t subtalker_top_k;        /* default: -1   (inherit)           */
+    float   subtalker_top_p;        /* default: -1.0 (inherit main top_p) */
     /* Language as a name string (preferred over language_id).
      * E.g. "auto", "english", "chinese", "japanese", "korean", ...
      * Leave as empty string "" to use language_id instead.             */

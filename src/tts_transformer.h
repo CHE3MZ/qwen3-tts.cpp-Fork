@@ -290,9 +290,9 @@ public:
                   float top_p = 1.0f,
                   float subtalker_temperature = -1.0f,
                   int32_t subtalker_top_k = -1,
-                  bool non_streaming_mode = false);
+                  bool non_streaming_mode = false,
+                  float subtalker_top_p = -1.0f);
 
-    // Generate speech codes with ICL (In-Context Learning) voice cloning.
     bool generate_icl(const int32_t * text_tokens, int32_t n_tokens,
                       const float * speaker_embd,
                       const int32_t * ref_text_tokens, int32_t n_ref_text_tokens,
@@ -306,7 +306,8 @@ public:
                       float top_p = 1.0f,
                       float subtalker_temperature = -1.0f,
                       int32_t subtalker_top_k = -1,
-                      bool non_streaming_mode = false);
+                      bool non_streaming_mode = false,
+                      float subtalker_top_p = -1.0f);
 
     bool generate_from_prefill(const std::vector<float> & prefill_embd,
                                 const std::vector<float> & trailing_text_hidden,
@@ -318,7 +319,8 @@ public:
                                 int32_t top_k = 50,
                                 float top_p = 1.0f,
                                 float subtalker_temperature = -1.0f,
-                                int32_t subtalker_top_k = -1);
+                                int32_t subtalker_top_k = -1,
+                                float subtalker_top_p = -1.0f);
 
     const tts_transformer_config & get_config() const { return model_.config; }
 
