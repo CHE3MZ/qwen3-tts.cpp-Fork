@@ -38,6 +38,7 @@ struct tts_params {
     // -1.0 / -1 means "inherit from main-talker values above"
     float   subtalker_temperature = -1.0f;
     int32_t subtalker_top_k       = -1;
+    float   subtalker_top_p       = -1.0f;  // -1.0 = inherit from main top_p
 
     // Language: "auto", "english", "chinese", "japanese", "korean",
     //            "russian", "german", "french", "spanish", "italian", …
@@ -238,6 +239,7 @@ private:
         float   repetition_penalty = 1.05f;
         float   subtalker_temp     = -1.0f;
         int32_t subtalker_top_k    = -1;
+        float   subtalker_top_p    = 1.0f;
         int32_t max_new_tokens     = 2048;
         bool    loaded             = false;
     } gen_defaults_;

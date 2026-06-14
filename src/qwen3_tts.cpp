@@ -118,18 +118,80 @@ static std::string format_bytes(uint64_t bytes) {
 
 static void resample_linear(const float * input, int input_len, int input_rate,
                              std::vector<float> & output, int output_rate) {
+    if (input_rate == output_rate) {
+        output.assign(input, input + input_len);
+        return;
+    }
+    // Kaiser-windowed sinc resampler (quality comparable to librosa's default).
+    // Window half-length M controls quality/speed trade-off; 32 is a good default.
+    const int M = 32;
+    const double cutoff = (input_rate < output_rate)
+                          ? 0.5 * input_rate                  // upsample: keep all input freqs
+                          : 0.5 * output_rate;                 // downsample: anti-alias at output Nyquist
+    const double fc = cutoff / input_rate;                     // normalised cutoff (0..0.5)
+
+    // Kaiser window parameter beta ≈ 8.0 (good stopband attenuation ~80 dB)
+    const double beta = 8.0;
+    // Compute I0(beta) for normalisation
+    auto bessel_i0 = [](double x) {
+        double sum = 1.0, term = 1.0;
+        for (int k = 1; k <= 30; ++k) {
+            term *= (x / 2.0) / k;
+            term *= (x / 2.0) / k;
+            sum += term * term;
+        }
+        return sum;
+    };
+    double inv_i0beta = 1.0 / bessel_i0(beta);
+
+    // Precompute sinc filter kernel at integer sample offsets -M..M
+    // h[n] = w[n] * sinc(2*fc*(n))    n in [-M, M]
+    const int kernel_len = 2 * M + 1;
+    std::vector<double> h(kernel_len);
+    for (int n = -M; n <= M; ++n) {
+        int idx = n + M;
+        double r = (double)n / M;
+        // Kaiser window
+        double w_val = bessel_i0(beta * std::sqrt(1.0 - r * r)) * inv_i0beta;
+        // Sinc
+        double arg = 2.0 * fc * n;
+        double s_val = (n == 0) ? 2.0 * fc : std::sin(3.14159265358979323846 * arg) / (3.14159265358979323846 * n);
+        h[idx] = w_val * s_val;
+    }
+
     double ratio = (double)input_rate / output_rate;
-    int output_len = (int)((double)input_len / ratio);
+    int output_len = (int)std::ceil((double)input_len / ratio);
     output.resize(output_len);
+
     for (int i = 0; i < output_len; ++i) {
         double src = i * ratio;
-        int    i0  = (int)src;
-        int    i1  = i0 + 1;
-        double f   = src - i0;
-        if (i1 >= input_len)
-            output[i] = input[input_len - 1];
-        else
-            output[i] = (float)((1.0 - f) * input[i0] + f * input[i1]);
+        int i_center = (int)std::round(src);
+        double frac = src - i_center;
+
+        double acc = 0.0;
+        double wt  = 0.0;
+        for (int n = -M; n <= M; ++n) {
+            int src_idx = i_center + n;
+            if (src_idx < 0 || src_idx >= input_len) continue;
+            // Sub-sample offset: kernel evaluated at (n - frac) in units of input samples
+            double t_val = (n - frac);
+            // Interpolate h at fractional position using linear interp between adjacent integers
+            double h_val;
+            if (std::fabs(t_val) >= M) {
+                h_val = 0.0;
+            } else {
+                int t0 = (int)std::floor(t_val) + M;
+                int t1 = t0 + 1;
+                double f = t_val - std::floor(t_val);
+                h_val = (t0 >= 0 && t1 < kernel_len)
+                        ? h[t0] * (1.0 - f) + h[t1] * f
+                        : (t0 >= 0 && t0 < kernel_len ? h[t0] : 0.0);
+            }
+            acc += input[src_idx] * h_val;
+            wt  += h_val;
+        }
+        // Normalise (avoids edge taper artefacts)
+        output[i] = (std::fabs(wt) > 1e-10) ? (float)(acc / wt) : 0.0f;
     }
 }
 
@@ -295,6 +357,7 @@ bool Qwen3TTS::load_generation_config(const std::string & json_path) {
     if (json_get_float(json, "repetition_penalty",  fv)) gen_defaults_.repetition_penalty  = fv;
     if (json_get_float(json, "subtalker_temperature", fv)) gen_defaults_.subtalker_temp    = fv;
     if (json_get_int(json,   "subtalker_top_k",     iv)) gen_defaults_.subtalker_top_k    = iv;
+    if (json_get_float(json, "subtalker_top_p",     fv)) gen_defaults_.subtalker_top_p    = fv;
     if (json_get_int(json,   "max_new_tokens",       iv)) gen_defaults_.max_new_tokens    = iv;
     gen_defaults_.loaded = true;
     fprintf(stderr, "  generation_config.json loaded from %s\n", json_path.c_str());
@@ -760,6 +823,9 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
         if (params.subtalker_top_k    == tts_params{}.subtalker_top_k
                 && gen_defaults_.subtalker_top_k >= 0)
             params.subtalker_top_k    = gen_defaults_.subtalker_top_k;
+        if (params.subtalker_top_p    == tts_params{}.subtalker_top_p
+                && gen_defaults_.subtalker_top_p >= 0.0f)
+            params.subtalker_top_p    = gen_defaults_.subtalker_top_p;
         if (params.max_audio_tokens   == tts_params{}.max_audio_tokens
                 && gen_defaults_.max_new_tokens != tts_params{}.max_audio_tokens)
             params.max_audio_tokens   = gen_defaults_.max_new_tokens;

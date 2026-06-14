@@ -2825,7 +2825,13 @@ static int32_t sample_token(
     }
 
     // 7. Softmax → sample
+    // Guard: if all logits are -inf (e.g. after aggressive top-k + suppress),
+    // fall back to argmax to avoid NaN from expf(-inf - -inf).
     float mx = *std::max_element(logits.data(), logits.data() + vocab_size);
+    if (!std::isfinite(mx)) {
+        // All tokens suppressed — return token 0 as safe fallback
+        return 0;
+    }
     double sum = 0.0;
     probs.resize(vocab_size);
     for (int32_t i = 0; i < vocab_size; ++i) {

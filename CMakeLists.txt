@@ -55,29 +55,39 @@ else()
     set(GGML_HAS_METAL OFF)
 endif()
 
-# Text tokenizer library
-add_library(text_tokenizer STATIC
-    src/text_tokenizer.cpp
+# gguf_loader utility — shared by all components, compiled once
+add_library(gguf_loader STATIC
     src/gguf_loader.cpp
 )
-target_include_directories(text_tokenizer PUBLIC
+target_include_directories(gguf_loader PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(text_tokenizer PUBLIC ${GGML_LINK_DIRS})
-target_link_libraries(text_tokenizer PUBLIC
+target_link_directories(gguf_loader PUBLIC ${GGML_LINK_DIRS})
+target_link_libraries(gguf_loader PUBLIC
     ggml
     ggml-base
     ggml-cpu
     Threads::Threads
 )
 if(GGML_HAS_METAL)
-    target_link_libraries(text_tokenizer PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
+    target_link_libraries(gguf_loader PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
 endif()
+
+# Text tokenizer library
+add_library(text_tokenizer STATIC
+    src/text_tokenizer.cpp
+)
+target_include_directories(text_tokenizer PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GGML_DIR}/include
+)
+target_link_libraries(text_tokenizer PUBLIC
+    gguf_loader
+)
 
 # TTS Transformer library (GGML-based + optional CoreML bridge)
 set(TTS_TRANSFORMER_SOURCES
-    src/gguf_loader.cpp
     src/tts_transformer.cpp
 )
 if(APPLE AND QWEN3_TTS_COREML)
@@ -94,16 +104,9 @@ target_include_directories(tts_transformer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(tts_transformer PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(tts_transformer PUBLIC
-    ggml
-    ggml-base
-    ggml-cpu
-    Threads::Threads
+    gguf_loader
 )
-if(GGML_HAS_METAL)
-    target_link_libraries(tts_transformer PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
-endif()
 if(APPLE AND QWEN3_TTS_COREML)
     target_link_libraries(tts_transformer PUBLIC
         "-framework Foundation"
@@ -114,62 +117,38 @@ endif()
 # Audio tokenizer encoder library (GGML-based)
 add_library(audio_tokenizer_encoder STATIC
     src/audio_tokenizer_encoder.cpp
-    src/gguf_loader.cpp
 )
 target_include_directories(audio_tokenizer_encoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(audio_tokenizer_encoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(audio_tokenizer_encoder PUBLIC
-    ggml
-    ggml-base
-    ggml-cpu
-    Threads::Threads
+    gguf_loader
 )
-if(GGML_HAS_METAL)
-    target_link_libraries(audio_tokenizer_encoder PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
-endif()
 
 # Mimi audio encoder library (CPU-based, for ICL voice cloning)
 add_library(mimi_encoder STATIC
     src/mimi_encoder.cpp
-    src/gguf_loader.cpp
 )
 target_include_directories(mimi_encoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(mimi_encoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(mimi_encoder PUBLIC
-    ggml
-    ggml-base
-    ggml-cpu
-    Threads::Threads
+    gguf_loader
 )
-if(GGML_HAS_METAL)
-    target_link_libraries(mimi_encoder PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
-endif()
 
 # Audio tokenizer decoder library (GGML-based)
 add_library(audio_tokenizer_decoder STATIC
     src/audio_tokenizer_decoder.cpp
-    src/gguf_loader.cpp
 )
 target_include_directories(audio_tokenizer_decoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(audio_tokenizer_decoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(audio_tokenizer_decoder PUBLIC
-    ggml
-    ggml-base
-    ggml-cpu
-    Threads::Threads
+    gguf_loader
 )
-if(GGML_HAS_METAL)
-    target_link_libraries(audio_tokenizer_decoder PUBLIC ggml-metal "-framework Metal" "-framework MetalKit")
-endif()
 
 # Qwen3 TTS library (full pipeline)
 add_library(qwen3_tts STATIC
@@ -279,7 +258,7 @@ if(WIN32)
 endif()
 
 # Install targets
-install(TARGETS text_tokenizer tts_transformer audio_tokenizer_encoder audio_tokenizer_decoder qwen3_tts qwen3tts_shared qwen3-tts-cli
+install(TARGETS gguf_loader text_tokenizer tts_transformer audio_tokenizer_encoder audio_tokenizer_decoder qwen3_tts qwen3tts_shared qwen3-tts-cli
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin

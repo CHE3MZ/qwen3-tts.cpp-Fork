@@ -749,7 +749,10 @@ bool MimiEncoder::run_transformer(const std::vector<float> & hidden_in, int32_t 
             for (int32_t t = 0; t < n_frames; ++t) {
                 float * sc_row = scores_full.data() + (size_t)t * n_frames;
 
-                // Full causal mask — no sliding window (Python is_causal=True, no window)
+                // Full causal mask — Python uses is_causal=True with no sliding window mask.
+                // The sliding_window config field (250) is NOT enforced in the encoder transformer
+                // (confirmed empirically: position 0 still affects position 260 in Python).
+                // Use full causal attention for all inputs to match Python exactly.
                 for (int32_t k = 0; k < n_frames; ++k) {
                     if (k > t) sc_row[k] = -1e30f;
                     else sc_row[k] *= scale;
