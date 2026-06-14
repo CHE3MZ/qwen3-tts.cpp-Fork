@@ -1095,14 +1095,14 @@ bool save_audio_file(const std::string & path, const std::vector<float> & sample
     uint16_t block_align = num_channels * bits / 8;
     uint32_t data_size   = (uint32_t)(samples.size() * block_align);
     uint32_t file_size   = 36 + data_size;
-    uint16_t fmt_size16  = 16;
+    uint32_t fmt_size   = 16;
     uint16_t pcm         = 1;
 
     fwrite("RIFF", 1, 4, f);
     fwrite(&file_size,    4, 1, f);
     fwrite("WAVE", 1, 4, f);
     fwrite("fmt ", 1, 4, f);
-    fwrite(&fmt_size16,   4, 1, f);
+    fwrite(&fmt_size,     4, 1, f);
     fwrite(&pcm,          2, 1, f);
     fwrite(&num_channels, 2, 1, f);
     uint32_t sr = (uint32_t)sample_rate;
