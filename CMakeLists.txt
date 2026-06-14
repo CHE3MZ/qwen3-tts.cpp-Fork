@@ -20,6 +20,13 @@ elseif(MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /fp:fast")
 endif()
 
+# Clang-cl on Windows (Ninja build): enable native CPU optimizations (AVX2/AVX512)
+# clang-cl identifies as "Clang" but is invoked via MSVC-compatible flags on Windows
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native -O3")
+    message(STATUS "Clang-cl: enabling -march=native for AVX2/AVX512")
+endif()
+
 # KV cache precision option
 # F32 KV cache gives bit-exact non-streaming output matching Python float32 inference.
 # F16 (default) uses half the memory but may differ by 1 frame at EOS boundary.
@@ -61,9 +68,45 @@ set(GGML_LINK_DIRS
 # Detect Metal backend availability
 if(APPLE AND EXISTS "${GGML_BUILD_DIR}/src/ggml-metal/libggml-metal.dylib")
     set(GGML_HAS_METAL ON)
-    message(STATUS "GGML Metal backend found — GPU acceleration enabled")
+    message(STATUS "GGML Metal backend found — GPU acceleration enabled (Apple)")
 else()
     set(GGML_HAS_METAL OFF)
+endif()
+
+# Detect CUDA backend availability
+if(EXISTS "${GGML_BUILD_DIR}/src/ggml-cuda")
+    file(GLOB GGML_CUDA_LIBS "${GGML_BUILD_DIR}/src/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+                              "${GGML_BUILD_DIR}/src/Release/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    if(GGML_CUDA_LIBS)
+        set(GGML_HAS_CUDA ON)
+        message(STATUS "GGML CUDA backend found — GPU acceleration enabled (NVIDIA)")
+    else()
+        set(GGML_HAS_CUDA OFF)
+    endif()
+else()
+    set(GGML_HAS_CUDA OFF)
+endif()
+
+# Detect Vulkan backend availability
+if(EXISTS "${GGML_BUILD_DIR}/src/ggml-vulkan")
+    file(GLOB GGML_VULKAN_LIBS "${GGML_BUILD_DIR}/src/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+                                "${GGML_BUILD_DIR}/src/Release/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    if(GGML_VULKAN_LIBS)
+        set(GGML_HAS_VULKAN ON)
+        message(STATUS "GGML Vulkan backend found — GPU acceleration enabled (cross-platform)")
+    else()
+        set(GGML_HAS_VULKAN OFF)
+    endif()
+else()
+    set(GGML_HAS_VULKAN OFF)
+endif()
+
+if(NOT GGML_HAS_METAL AND NOT GGML_HAS_CUDA AND NOT GGML_HAS_VULKAN)
+    message(STATUS "No GPU backend detected — running on CPU only")
+    message(STATUS "  For GPU acceleration:")
+    message(STATUS "    macOS:   cmake -S ggml -B ggml/build -DGGML_METAL=ON")
+    message(STATUS "    Windows: cmake -S ggml -B ggml/build -DGGML_CUDA=ON  (needs CUDA toolkit)")
+    message(STATUS "    Any GPU: cmake -S ggml -B ggml/build -DGGML_VULKAN=ON (needs Vulkan SDK)")
 endif()
 
 # gguf_loader utility — shared by all components, compiled once
@@ -252,16 +295,22 @@ target_link_libraries(test_mimi_encoder PRIVATE
 
 # On Windows, copy GGML DLLs to the output directory so executables can find them at runtime.
 # GGML is built separately (ggml/build) and its DLLs are not automatically staged by CMake.
+# Copies core DLLs + any GPU backend DLLs that were built (CUDA, Vulkan).
 if(WIN32)
     set(GGML_DLL_SEARCH_DIRS
         ${GGML_BUILD_DIR}/src/Release
         ${GGML_BUILD_DIR}/src/Debug
         ${GGML_BUILD_DIR}/src
     )
-    foreach(_dll ggml.dll ggml-base.dll ggml-cpu.dll)
+    # Core DLLs — always required
+    set(GGML_CORE_DLLS ggml.dll ggml-base.dll ggml-cpu.dll)
+    # GPU backend DLLs — copied only if built
+    set(GGML_GPU_DLLS ggml-cuda.dll ggml-cuda-f16.dll ggml-vulkan.dll ggml-sycl.dll)
+    foreach(_dll ${GGML_CORE_DLLS} ${GGML_GPU_DLLS})
         foreach(_dir ${GGML_DLL_SEARCH_DIRS})
             if(EXISTS "${_dir}/${_dll}")
                 configure_file("${_dir}/${_dll}" "${CMAKE_BINARY_DIR}/${_dll}" COPYONLY)
+                message(STATUS "Staging DLL: ${_dll}")
                 break()
             endif()
         endforeach()
