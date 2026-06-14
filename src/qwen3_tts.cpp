@@ -136,9 +136,9 @@ static void resample_linear(const float * input, int input_len, int input_rate,
     auto bessel_i0 = [](double x) {
         double sum = 1.0, term = 1.0;
         for (int k = 1; k <= 30; ++k) {
-            term *= (x / 2.0) / k;
-            term *= (x / 2.0) / k;
-            sum += term * term;
+            double r = (x / 2.0) / k;
+            term *= r * r;
+            sum += term;
         }
         return sum;
     };
@@ -829,6 +829,9 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
         if (params.max_audio_tokens   == tts_params{}.max_audio_tokens
                 && gen_defaults_.max_new_tokens != tts_params{}.max_audio_tokens)
             params.max_audio_tokens   = gen_defaults_.max_new_tokens;
+        // do_sample=false forces greedy decoding (temperature=0)
+        if (!gen_defaults_.do_sample && params.temperature == gen_defaults_.temperature)
+            params.temperature = 0.0f;
     }
 
     // ---- Memory tracking ------------------------------------------------
@@ -1096,33 +1099,35 @@ bool save_audio_file(const std::string & path, const std::vector<float> & sample
     if (!f) { fprintf(stderr, "ERROR: Cannot create WAV: %s\n", path.c_str()); return false; }
 
     uint16_t num_channels = 1, bits = 16;
-    uint32_t byte_rate   = sample_rate * num_channels * bits / 8;
-    uint16_t block_align = num_channels * bits / 8;
+    uint32_t byte_rate   = (uint32_t)(sample_rate * num_channels * bits / 8);
+    uint16_t block_align = (uint16_t)(num_channels * bits / 8);
     uint32_t data_size   = (uint32_t)(samples.size() * block_align);
     uint32_t file_size   = 36 + data_size;
-    uint32_t fmt_size   = 16;
+    uint32_t fmt_size    = 16;
     uint16_t pcm         = 1;
+    uint32_t sr          = (uint32_t)sample_rate;
 
-    fwrite("RIFF", 1, 4, f);
-    fwrite(&file_size,    4, 1, f);
-    fwrite("WAVE", 1, 4, f);
-    fwrite("fmt ", 1, 4, f);
-    fwrite(&fmt_size,     4, 1, f);
-    fwrite(&pcm,          2, 1, f);
-    fwrite(&num_channels, 2, 1, f);
-    uint32_t sr = (uint32_t)sample_rate;
-    fwrite(&sr,           4, 1, f);
-    fwrite(&byte_rate,    4, 1, f);
-    fwrite(&block_align,  2, 1, f);
-    fwrite(&bits,         2, 1, f);
-    fwrite("data", 1, 4, f);
-    fwrite(&data_size,    4, 1, f);
+    // Write WAV header — check every write to detect full-disk early
+#define W(ptr, sz, n) do { if (fwrite((ptr),(sz),(n),f)!=(size_t)(n)) { fclose(f); return false; } } while(0)
+    W("RIFF",       1, 4);  W(&file_size,   4, 1);
+    W("WAVE",       1, 4);  W("fmt ",       1, 4);
+    W(&fmt_size,    4, 1);  W(&pcm,         2, 1);
+    W(&num_channels,2, 1);  W(&sr,          4, 1);
+    W(&byte_rate,   4, 1);  W(&block_align, 2, 1);
+    W(&bits,        2, 1);  W("data",       1, 4);
+    W(&data_size,   4, 1);
+#undef W
 
-    for (float s : samples) {
+    // Convert float32 → int16 in one batch and write once for performance
+    std::vector<int16_t> pcm_buf(samples.size());
+    for (size_t i = 0; i < samples.size(); ++i) {
+        float s = samples[i];
         if (s >  1.0f) s =  1.0f;
         if (s < -1.0f) s = -1.0f;
-        int16_t pcm_s = (int16_t)(s * 32767.0f);
-        fwrite(&pcm_s, 2, 1, f);
+        pcm_buf[i] = (int16_t)(s * 32767.0f);
+    }
+    if (!pcm_buf.empty() && fwrite(pcm_buf.data(), 2, pcm_buf.size(), f) != pcm_buf.size()) {
+        fclose(f); return false;
     }
     fclose(f);
     return true;

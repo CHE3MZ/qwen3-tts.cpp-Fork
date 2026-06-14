@@ -157,7 +157,8 @@ bool MimiEncoder::load_model(const std::string & model_path) {
     // Read config from GGUF
     auto & cfg = model_.config;
     cfg.sample_rate       = loader.get_u32("qwen3-tts.tokenizer.sample_rate", 24000);
-    cfg.num_valid_quantizers = loader.get_u32("qwen3-tts.tokenizer.num_codebooks", 16);
+    cfg.num_valid_quantizers = loader.get_u32("qwen3-tts-tokenizer.num_codebooks",
+                               loader.get_u32("qwen3-tts.tokenizer.num_codebooks", 16));
     cfg.num_quantizers    = loader.get_u32("mimi.num_quantizers", 32);
     cfg.codebook_size     = loader.get_u32("mimi.codebook_size", 2048);
     cfg.codebook_dim      = loader.get_u32("mimi.codebook_dim", 256);
