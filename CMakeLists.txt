@@ -39,6 +39,14 @@ find_package(Threads REQUIRED)
 set(GGML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ggml")
 set(GGML_BUILD_DIR "${GGML_DIR}/build")
 
+# GGML link search dirs: flat (Ninja/Make) and config-suffixed (MSVC multi-config)
+set(GGML_LINK_DIRS
+    ${GGML_BUILD_DIR}/src
+    ${GGML_BUILD_DIR}/src/Release
+    ${GGML_BUILD_DIR}/src/Debug
+    ${GGML_BUILD_DIR}/src/ggml-metal
+)
+
 # Detect Metal backend availability
 if(APPLE AND EXISTS "${GGML_BUILD_DIR}/src/ggml-metal/libggml-metal.dylib")
     set(GGML_HAS_METAL ON)
@@ -56,10 +64,7 @@ target_include_directories(text_tokenizer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(text_tokenizer PUBLIC
-    ${GGML_BUILD_DIR}/src
-    ${GGML_BUILD_DIR}/src/ggml-metal
-)
+target_link_directories(text_tokenizer PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(text_tokenizer PUBLIC
     ggml
     ggml-base
@@ -89,10 +94,7 @@ target_include_directories(tts_transformer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(tts_transformer PUBLIC
-    ${GGML_BUILD_DIR}/src
-    ${GGML_BUILD_DIR}/src/ggml-metal
-)
+target_link_directories(tts_transformer PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(tts_transformer PUBLIC
     ggml
     ggml-base
@@ -118,10 +120,7 @@ target_include_directories(audio_tokenizer_encoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(audio_tokenizer_encoder PUBLIC
-    ${GGML_BUILD_DIR}/src
-    ${GGML_BUILD_DIR}/src/ggml-metal
-)
+target_link_directories(audio_tokenizer_encoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(audio_tokenizer_encoder PUBLIC
     ggml
     ggml-base
@@ -141,10 +140,7 @@ target_include_directories(mimi_encoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(mimi_encoder PUBLIC
-    ${GGML_BUILD_DIR}/src
-    ${GGML_BUILD_DIR}/src/ggml-metal
-)
+target_link_directories(mimi_encoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(mimi_encoder PUBLIC
     ggml
     ggml-base
@@ -164,10 +160,7 @@ target_include_directories(audio_tokenizer_decoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GGML_DIR}/include
 )
-target_link_directories(audio_tokenizer_decoder PUBLIC
-    ${GGML_BUILD_DIR}/src
-    ${GGML_BUILD_DIR}/src/ggml-metal
-)
+target_link_directories(audio_tokenizer_decoder PUBLIC ${GGML_LINK_DIRS})
 target_link_libraries(audio_tokenizer_decoder PUBLIC
     ggml
     ggml-base
@@ -266,6 +259,24 @@ target_link_libraries(test_mimi_encoder PRIVATE
     mimi_encoder
     Threads::Threads
 )
+
+# On Windows, copy GGML DLLs to the output directory so executables can find them at runtime.
+# GGML is built separately (ggml/build) and its DLLs are not automatically staged by CMake.
+if(WIN32)
+    set(GGML_DLL_SEARCH_DIRS
+        ${GGML_BUILD_DIR}/src/Release
+        ${GGML_BUILD_DIR}/src/Debug
+        ${GGML_BUILD_DIR}/src
+    )
+    foreach(_dll ggml.dll ggml-base.dll ggml-cpu.dll)
+        foreach(_dir ${GGML_DLL_SEARCH_DIRS})
+            if(EXISTS "${_dir}/${_dll}")
+                configure_file("${_dir}/${_dll}" "${CMAKE_BINARY_DIR}/${_dll}" COPYONLY)
+                break()
+            endif()
+        endforeach()
+    endforeach()
+endif()
 
 # Install targets
 install(TARGETS text_tokenizer tts_transformer audio_tokenizer_encoder audio_tokenizer_decoder qwen3_tts qwen3tts_shared qwen3-tts-cli

@@ -1,5 +1,6 @@
 # Build
 build/
+build-ninja/
 *.o
 *.a
 *.so
