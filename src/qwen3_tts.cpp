@@ -855,6 +855,11 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     // ---- Tokenize -------------------------------------------------------
     int64_t t0 = get_time_ms();
 
+    // Apply thread count (default 4 → use all available cores for speed)
+    if (params.n_threads > 0) {
+        transformer_.set_n_threads(params.n_threads);
+    }
+
     std::string model_type = get_model_type();
     int32_t     language_id = params_language_id(params);
 

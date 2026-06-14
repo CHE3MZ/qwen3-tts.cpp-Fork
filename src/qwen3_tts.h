@@ -11,6 +11,7 @@
 #include <map>
 #include <functional>
 #include <cstdint>
+#include <thread>
 
 namespace qwen3_tts {
 
@@ -67,8 +68,8 @@ struct tts_params {
     // Default false = streaming mode (interleaved text + codec).
     bool non_streaming_mode = false;
 
-    // Threading
-    int32_t n_threads = 4;
+    // Threading — default to hardware concurrency (capped at 8 to avoid diminishing returns)
+    int32_t n_threads = (int32_t)std::min((unsigned)8u, std::thread::hardware_concurrency());
 
     // Logging
     bool print_progress = false;

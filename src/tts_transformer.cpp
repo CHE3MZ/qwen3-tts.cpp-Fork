@@ -1,5 +1,6 @@
 #include "tts_transformer.h"
 #include "gguf_loader.h"
+#include "ggml-cpu.h"
 
 #include <cmath>
 #include <cstring>
@@ -835,6 +836,19 @@ bool TTSTransformer::init_kv_cache(int32_t n_ctx) {
 
 void TTSTransformer::clear_kv_cache() {
     state_.cache.n_used = 0;
+}
+
+void TTSTransformer::set_n_threads(int32_t n_threads) {
+    if (n_threads <= 0) return;
+    // Apply to CPU backend (no-op if using GPU backend)
+    if (state_.backend_cpu) {
+        ggml_backend_cpu_set_n_threads(state_.backend_cpu, n_threads);
+    } else if (state_.backend) {
+        ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
+        if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+            ggml_backend_cpu_set_n_threads(state_.backend, n_threads);
+        }
+    }
 }
 
 bool TTSTransformer::init_code_pred_kv_cache(int32_t n_ctx) {

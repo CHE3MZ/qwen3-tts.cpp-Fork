@@ -219,6 +219,10 @@ public:
     
     // Clear KV cache
     void clear_kv_cache();
+
+    // Set number of CPU threads for inference (default: 4).
+    // Has no effect if using a GPU backend (Metal/CUDA/Vulkan).
+    void set_n_threads(int32_t n_threads);
     
     // Initialize code predictor KV cache (5 layers, max 16 context)
     bool init_code_pred_kv_cache(int32_t n_ctx);
