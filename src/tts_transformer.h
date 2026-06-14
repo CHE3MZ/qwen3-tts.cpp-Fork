@@ -267,7 +267,8 @@ public:
     bool predict_codes_autoregressive(const float * hidden, int32_t codebook_0_token, 
                                        std::vector<int32_t> & output,
                                        float temperature = 0.9f,
-                                       int32_t top_k = 50);
+                                       int32_t top_k = 50,
+                                       float top_p = 1.0f);
     
     // Generate speech codes autoregressively
     // text_tokens: input text token IDs [n_tokens]
@@ -327,14 +328,8 @@ public:
                             const float * audio_embd, int32_t n_audio,
                             int32_t audio_start_pos, int32_t n_past,
                             std::vector<float> & output);
-    
-private:
-    bool try_init_coreml_code_predictor(const std::string & model_path);
-    bool predict_codes_autoregressive_coreml(const float * hidden, int32_t codebook_0_token,
-                                             std::vector<int32_t> & output,
-                                             float temperature,
-                                             int32_t top_k);
 
+    // Prefill embedding builders — public so qwen3_tts.cpp can call them
     bool build_prefill_graph(const int32_t * text_tokens, int32_t n_tokens,
                              const float * speaker_embd, int32_t language_id,
                              std::vector<float> & prefill_embd,
@@ -342,7 +337,6 @@ private:
                              std::vector<float> & tts_pad_embed,
                              bool non_streaming_mode = false);
 
-    // Build prefill embedding for ICL mode (prepends ref text + ref codes)
     bool build_prefill_graph_icl(const int32_t * text_tokens, int32_t n_tokens,
                                   const float * speaker_embd, int32_t language_id,
                                   const int32_t * ref_text_tokens, int32_t n_ref_text_tokens,
@@ -352,8 +346,6 @@ private:
                                   std::vector<float> & tts_pad_embed,
                                   bool non_streaming_mode = false);
 
-    // Build prefill embedding for VoiceDesign / CustomVoice instruct modes.
-    // instruct_tokens: tokenised instruct text (may be nullptr/0 for no instruct)
     bool build_prefill_graph_instruct(const int32_t * text_tokens, int32_t n_tokens,
                                        const float * speaker_embd, int32_t language_id,
                                        const int32_t * instruct_tokens, int32_t n_instruct_tokens,
@@ -362,8 +354,15 @@ private:
                                        std::vector<float> & tts_pad_embed,
                                        bool non_streaming_mode = false);
 
-    struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
+private:
+    bool try_init_coreml_code_predictor(const std::string & model_path);
+    bool predict_codes_autoregressive_coreml(const float * hidden, int32_t codebook_0_token,
+                                             std::vector<int32_t> & output,
+                                             float temperature,
+                                             int32_t top_k);
 
+    // Internal graph builders
+    struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
     struct ggml_cgraph * build_step_graph(int32_t n_past);
 
     bool project_text_tokens(const int32_t * text_tokens, int32_t n_tokens,

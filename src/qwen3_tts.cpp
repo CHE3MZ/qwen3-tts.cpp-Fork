@@ -14,6 +14,9 @@
 
 #ifdef __APPLE__
 #include <mach/mach.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <psapi.h>
 #else
 #include <sys/resource.h>
 #endif
@@ -83,6 +86,16 @@ static bool get_process_memory_snapshot(process_memory_snapshot & out) {
         out.phys_footprint_bytes = (uint64_t)vm_info.phys_footprint;
     else
         out.phys_footprint_bytes = out.rss_bytes;
+    return true;
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS_EX pmc = {};
+    pmc.cb = sizeof(pmc);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(),
+                              reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc),
+                              sizeof(pmc)))
+        return false;
+    out.rss_bytes            = (uint64_t)pmc.WorkingSetSize;
+    out.phys_footprint_bytes = (uint64_t)pmc.PrivateUsage;
     return true;
 #else
     struct rusage usage = {};
@@ -908,7 +921,8 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     snap_mem("synth/end");
 
     if (params.print_timing) {
-        const double audio_sec = (double)result.audio.size() / std::max(1, result.sample_rate);
+        const double audio_sec = result.sample_rate > 0
+            ? (double)result.audio.size() / (double)result.sample_rate : 0.0;
         const double wall_sec  = result.t_total_ms / 1000.0;
         fprintf(stderr, "\nTiming:\n");
         fprintf(stderr, "  Tokenize:  %6lld ms\n", (long long)result.t_tokenize_ms);

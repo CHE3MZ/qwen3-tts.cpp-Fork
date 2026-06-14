@@ -1,6 +1,7 @@
 #include "mimi_encoder.h"
 #include "gguf_loader.h"
 #include "ggml-cpu.h"
+#include "ggml-backend.h"
 
 #include <cmath>
 #include <cstring>
@@ -77,9 +78,10 @@ void MimiEncoder::apply_layer_norm(float * data, int32_t len, int32_t dim,
 // ============================================================
 // Causal Conv1d (CPU)
 // input:  [in_len, in_ch]  row-major (time-major)
-// weight: [out_ch, in_ch, kernel] in PyTorch layout (conv stored as [OC, IC, K])
-//         BUT in GGUF it's stored transposed to [K, IC, OC] for ggml
-//         We read weight as [out_ch, in_ch, kernel] from our float vector
+// weight: stored in GGUF as PyTorch's [OC, IC, K] row-major.
+//         gguf-py reverses the dimensions in metadata (ne=[K,IC,OC])
+//         but the actual bytes are the PyTorch C-contiguous layout.
+//         So element w[oc, ic, k] is at raw offset: oc*IC*K + ic*K + k
 // output: [out_len, out_ch]
 // ============================================================
 void MimiEncoder::apply_causal_conv1d(
@@ -96,8 +98,8 @@ void MimiEncoder::apply_causal_conv1d(
 
     output.assign((size_t)out_len * out_ch, 0.0f);
 
-    // GGML stores Conv1d weight as [K, IC, OC] (C-contiguous row-major)
-    // w[k][ic][oc] = w[k * in_ch * out_ch + ic * out_ch + oc]
+    // Weight layout: PyTorch [OC, IC, K] stored C-contiguous in GGUF bytes.
+    // w[oc, ic, k] = w[oc * in_ch * kernel + ic * kernel + k]
     for (int32_t t = 0; t < out_len; ++t) {
         for (int32_t oc = 0; oc < out_ch; ++oc) {
             float sum = b ? b[oc] : 0.0f;
@@ -106,9 +108,9 @@ void MimiEncoder::apply_causal_conv1d(
                 if (src_t < 0 || src_t >= in_len) continue;
                 for (int32_t ic = 0; ic < in_ch; ++ic) {
                     sum += input[(size_t)src_t * in_ch + ic]
-                         * w[(size_t)k * in_ch * out_ch
-                             + (size_t)ic * out_ch
-                             + oc];
+                         * w[(size_t)oc * in_ch * kernel
+                             + (size_t)ic * kernel
+                             + k];
                 }
             }
             output[(size_t)t * out_ch + oc] = sum;
@@ -369,31 +371,23 @@ bool MimiEncoder::load_model(const std::string & model_path) {
         model_.acoustic_cbs[i].cluster_usage = get(buf);
     }
 
-    // Pre-compute normalized codebook embeddings in host memory
+    // Load pre-normalized codebook embeddings into host memory.
+    // The converter (convert_tokenizer_to_gguf.py) already divides embed_sum
+    // by cluster_usage before saving — so the GGUF tensor IS the normalized
+    // embedding.  We just copy it into cb.embed for fast host-side lookup.
+    // cluster_usage is NOT written to GGUF (skipped by the converter).
     auto normalize_codebook = [&](mimi_codebook & cb) {
-        if (!cb.embed_sum || !cb.cluster_usage) return;
-        // GGML tensor: ne[0] = codebook_dim (256), ne[1] = codebook_size (2048)
-        // (PyTorch [codebook_size, dim] is stored transposed in GGML)
+        if (!cb.embed_sum) return;
+        // GGML tensor shape: ne[0] = codebook_dim (256), ne[1] = codebook_size (2048)
         const int32_t cb_size = (int32_t)cb.embed_sum->ne[1];  // 2048
         const int32_t cb_dim  = (int32_t)cb.embed_sum->ne[0];  // 256
 
-        std::vector<float> embed_sum_f   = tensor_to_float(cb.embed_sum);
-        std::vector<float> cluster_usage_f = tensor_to_float(cb.cluster_usage);
-        const float eps = 1e-5f;
+        // tensor_to_float returns data in GGML row-major order:
+        // element [cb_size_idx, dim_idx] is at offset cb_size_idx * cb_dim + dim_idx
+        std::vector<float> raw = tensor_to_float(cb.embed_sum);
 
         cb.embed.resize((size_t)cb_size * cb_dim);
-        for (int32_t i = 0; i < cb_size; ++i) {
-            float u = cluster_usage_f[i];
-            if (u < eps) u = eps;
-            float inv_u = 1.0f / u;
-            for (int32_t d = 0; d < cb_dim; ++d) {
-                // GGML stores row-major as [dim, cb_size] -> element (d, i)
-                // PyTorch: [cb_size, dim] -> element (i, d) at i*dim+d
-                // GGML tensor with ne[0]=dim, ne[1]=cb_size:
-                // element (d, i) at memory offset d + i*dim
-                cb.embed[(size_t)i * cb_dim + d] = embed_sum_f[(size_t)d + (size_t)i * cb_dim] * inv_u;
-            }
-        }
+        memcpy(cb.embed.data(), raw.data(), (size_t)cb_size * cb_dim * sizeof(float));
     };
 
     for (auto & cb : model_.semantic_cbs)  normalize_codebook(cb);
@@ -449,6 +443,7 @@ bool MimiEncoder::run_conv_encoder(const float * samples, int32_t n_samples,
     };
 
     // Layer 0: initial conv (1 -> num_filters, k=7, causal)
+    // No activation after this layer — Python layers[0] is MimiConv1d with no activation
     {
         auto & c = model_.enc_conv0;
         if (!c.w) { error_msg_ = "enc_conv0 weight missing"; return false; }
@@ -460,7 +455,7 @@ bool MimiEncoder::run_conv_encoder(const float * samples, int32_t n_samples,
                             w.data(), b.empty() ? nullptr : b.data(),
                             7, 1, 1, 6,  // k=7, stride=1, dil=1, pad_left=6
                             out, out_len);
-        apply_elu(out);
+        // No ELU here — Python layers[0] is just Conv1d
         cur     = std::move(out);
         cur_len = out_len;
         cur_ch  = cfg.num_filters;
@@ -537,13 +532,35 @@ bool MimiEncoder::run_conv_encoder(const float * samples, int32_t n_samples,
             int32_t ratio = ratios[s];
             int32_t k = ratio * 2;
             int32_t ch_out = ch_in * 2;
+            // Causal padding left = k - ratio (= padding_total)
+            int32_t pad_left = k - ratio;
+            // Python MimiConv1d also adds right padding ("extra_padding") so that
+            // n_output_frames = ceil((in_len - k + pad_total) / stride + 1)
+            // extra_padding = ceil_frames*stride + k - pad_total - in_len
+            {
+                int32_t eff_k = k;  // dilation=1
+                int32_t padded = cur_len + pad_left;
+                // exact frame count with ceil
+                int64_t n_frames_ceil = ((int64_t)(padded - eff_k) + ratio - 1) / ratio + 1;
+                // floor frame count
+                int32_t n_frames_floor = (padded - eff_k) / ratio + 1;
+                if ((int32_t)n_frames_ceil > n_frames_floor) {
+                    // Need right padding
+                    int32_t ideal_len = (int32_t)((n_frames_ceil - 1) * ratio + eff_k - pad_left);
+                    int32_t extra = ideal_len - cur_len;
+                    if (extra > 0) {
+                        cur.resize((size_t)(cur_len + extra) * ch_in, 0.0f);
+                        cur_len += extra;
+                    }
+                }
+            }
             std::vector<float> wd = get_w(dc.w);
             std::vector<float> bd = dc.b ? get_w(dc.b) : std::vector<float>();
             std::vector<float> out;
             int32_t out_len;
             apply_causal_conv1d(cur.data(), cur_len, ch_in, ch_out,
                                 wd.data(), bd.empty() ? nullptr : bd.data(),
-                                k, ratio, 1, k - ratio,
+                                k, ratio, 1, pad_left,
                                 out, out_len);
             cur     = std::move(out);
             cur_len = out_len;
@@ -578,15 +595,52 @@ bool MimiEncoder::run_conv_encoder(const float * samples, int32_t n_samples,
 // Step 2: Transformer (8 layers, sliding-window attention)
 // Input/output: [n_frames, hidden_size]
 // ============================================================
+// Step 2: Transformer — GGML-accelerated matmuls for numerical accuracy
+// Input/output: [n_frames, hidden_size]
+// ============================================================
 bool MimiEncoder::run_transformer(const std::vector<float> & hidden_in, int32_t n_frames,
                                    std::vector<float> & hidden_out) {
-    const auto & cfg = model_.config;
-    const int32_t H  = cfg.hidden_size;
+    const auto & cfg   = model_.config;
+    const int32_t H    = cfg.hidden_size;
     const int32_t n_heads = cfg.num_attention_heads;
-    const int32_t hd = cfg.head_dim;
-    const float   eps = cfg.norm_eps;
+    const int32_t hd   = cfg.head_dim;
+    const float   eps  = cfg.norm_eps;
+    const int32_t I    = cfg.intermediate_size;
 
-    hidden_out = hidden_in;  // [n_frames, H], will be updated in-place per layer
+    hidden_out = hidden_in;  // [n_frames, H]
+
+    // ---- GGML context for temporary graph tensors ----
+    // Per matmul we need: weight [OC*IC*4B] + input [T*IC*4B] + result [T*OC*4B]
+    // Per layer: 5 matmuls (Q,K,V,O,fc1 with fc2) + per-head QK^T [T*T]
+    // Worst case: fc1 needs 469*2048*4 + 512*2048*4 ≈ 8MB compute
+    // QK^T per head: 469*469*4 = 879KB, × we realloc fresh context each call
+    const size_t layer_buf = (size_t)n_frames * I * 3 * sizeof(float)   // fc1 worst case
+                           + (size_t)H * I * sizeof(float)               // weight
+                           + (size_t)n_frames * n_frames * sizeof(float) // QK^T per head
+                           + (size_t)n_frames * hd * sizeof(float)       // head slice
+                           + 128 * ggml_tensor_overhead()
+                           + 8192;
+    const size_t ctx_buf_size = layer_buf + 4 * 1024 * 1024;            // 4MB extra
+
+    struct ggml_init_params gparams = {
+        /*.mem_size   =*/ ctx_buf_size,
+        /*.mem_buffer =*/ nullptr,
+        /*.no_alloc   =*/ false,
+    };
+
+    // Create one CPU backend once
+    ggml_backend_t backend_cpu = ggml_backend_cpu_init();
+    if (!backend_cpu) {
+        error_msg_ = "failed to init CPU backend for Mimi transformer";
+        return false;
+    }
+
+    // Helper: matrix multiply [n_frames, A] x [A, B] -> [n_frames, B]
+    // GGML mul_mat: A=[B, A] (column-major B), B=[A, n_frames] => result [B, n_frames]
+    // We want: result[t, b] = sum_a input[t,a] * w[b,a]  (w stored [B, A] in PyTorch)
+    // ggml_mul_mat(ctx, w_tensor, input_tensor) where w_tensor is [A, B] in GGML dims
+    // and input_tensor is [A, n_frames] -> result is [B, n_frames]
+    // So we feed input as [H, n_frames] (column-major for GGML) and w as [H, H] ggml dims.
 
     // Build RoPE frequencies
     std::vector<float> inv_freq(hd / 2);
@@ -594,54 +648,55 @@ bool MimiEncoder::run_transformer(const std::vector<float> & hidden_in, int32_t 
         inv_freq[i] = 1.0f / powf(cfg.rope_theta, (float)(2 * i) / (float)hd);
     }
 
+    // Helper lambdas working with raw float vectors (no GGML graph for non-matmul ops)
+    auto layer_norm = [&](std::vector<float> & x, int32_t dim,
+                          const std::vector<float> & w, const std::vector<float> & b) {
+        apply_layer_norm(x.data(), (int32_t)x.size(), dim, w.data(), b.data(), eps);
+    };
+
+    // GGML matmul helper: weight [OC, IC] (PyTorch), input [n_frames, IC]
+    // => output [n_frames, OC] using GGML's optimized ggml_mul_mat
+    auto matmul_ggml = [&](const std::vector<float> & weight, int32_t OC, int32_t IC,
+                            const std::vector<float> & input, int32_t T,
+                            std::vector<float> & output) -> bool {
+        struct ggml_context * ctx = ggml_init(gparams);
+        if (!ctx) { error_msg_ = "ggml_init failed in matmul_ggml"; return false; }
+
+        struct ggml_tensor * wt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, IC, OC);
+        memcpy(wt->data, weight.data(), (size_t)OC * IC * sizeof(float));
+
+        struct ggml_tensor * xt = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, IC, T);
+        memcpy(xt->data, input.data(), (size_t)T * IC * sizeof(float));
+
+        struct ggml_tensor * rt = ggml_mul_mat(ctx, wt, xt);
+
+        struct ggml_cgraph * gf = ggml_new_graph(ctx);
+        ggml_build_forward_expand(gf, rt);
+        ggml_backend_graph_compute(backend_cpu, gf);
+
+        output.resize((size_t)T * OC);
+        memcpy(output.data(), rt->data, (size_t)T * OC * sizeof(float));
+
+        ggml_free(ctx);
+        return true;
+    };
+
     for (int32_t l = 0; l < cfg.num_hidden_layers; ++l) {
         auto & ly = model_.tfm_layers[l];
-        if (ly.attn_q_w_f.empty()) continue;  // skip if not cached
-
-        const std::vector<float> & q_w       = ly.attn_q_w_f;
-        const std::vector<float> & k_w       = ly.attn_k_w_f;
-        const std::vector<float> & v_w       = ly.attn_v_w_f;
-        const std::vector<float> & o_w       = ly.attn_o_w_f;
-        const std::vector<float> & fc1_w     = ly.ffn_fc1_w_f;
-        const std::vector<float> & fc2_w     = ly.ffn_fc2_w_f;
-        const std::vector<float> & in_nw     = ly.attn_in_norm_w_f;
-        const std::vector<float> & in_nb     = ly.attn_in_norm_b_f;
-        const std::vector<float> & pn_nw     = ly.ffn_in_norm_w_f;
-        const std::vector<float> & pn_nb     = ly.ffn_in_norm_b_f;
-        const std::vector<float> & attn_scale = ly.attn_scale_f;
-        const std::vector<float> & ffn_scale  = ly.ffn_scale_f;
+        if (ly.attn_q_w_f.empty()) continue;
 
         // === Self-attention ===
-        // 1. LayerNorm input
-        std::vector<float> normed(n_frames * H);
-        memcpy(normed.data(), hidden_out.data(), n_frames * H * sizeof(float));
-        apply_layer_norm(normed.data(), n_frames * H, H,
-                         in_nw.data(), in_nb.data(), eps);
+        // 1. LayerNorm
+        std::vector<float> normed(hidden_out);
+        layer_norm(normed, H, ly.attn_in_norm_w_f, ly.attn_in_norm_b_f);
 
-        // 2. Q,K,V projections: [n_frames, H] x [H, H] -> [n_frames, H]
-        std::vector<float> Q(n_frames * H, 0.0f);
-        std::vector<float> K(n_frames * H, 0.0f);
-        std::vector<float> V(n_frames * H, 0.0f);
-        for (int32_t t = 0; t < n_frames; ++t) {
-            const float * in_row = normed.data() + (size_t)t * H;
-            float * q_row = Q.data() + (size_t)t * H;
-            float * k_row = K.data() + (size_t)t * H;
-            float * v_row = V.data() + (size_t)t * H;
-            for (int32_t o = 0; o < H; ++o) {
-                float sq = 0, sk = 0, sv = 0;
-                for (int32_t i = 0; i < H; ++i) {
-                    sq += in_row[i] * q_w[(size_t)o * H + i];
-                    sk += in_row[i] * k_w[(size_t)o * H + i];
-                    sv += in_row[i] * v_w[(size_t)o * H + i];
-                }
-                q_row[o] = sq;
-                k_row[o] = sk;
-                v_row[o] = sv;
-            }
-        }
+        // 2. Q, K, V projections via GGML matmul
+        std::vector<float> Q, K, V;
+        if (!matmul_ggml(ly.attn_q_w_f, H, H, normed, n_frames, Q)) { ggml_backend_free(backend_cpu); return false; }
+        if (!matmul_ggml(ly.attn_k_w_f, H, H, normed, n_frames, K)) { ggml_backend_free(backend_cpu); return false; }
+        if (!matmul_ggml(ly.attn_v_w_f, H, H, normed, n_frames, V)) { ggml_backend_free(backend_cpu); return false; }
 
         // 3. Apply RoPE to Q and K
-        // Q,K shaped [n_frames, n_heads, hd] — each position t, head h, dim d
         for (int32_t t = 0; t < n_frames; ++t) {
             for (int32_t h = 0; h < n_heads; ++h) {
                 float * q_row = Q.data() + (size_t)t * H + (size_t)h * hd;
@@ -661,106 +716,99 @@ bool MimiEncoder::run_transformer(const std::vector<float> & hidden_in, int32_t 
         }
 
         // 4. Scaled dot-product attention with sliding window
+        // Use GGML matmul for QK^T and AV to match PyTorch numerics
         const float scale = 1.0f / sqrtf((float)hd);
         std::vector<float> attn_out(n_frames * H, 0.0f);
 
+        // Process head by head; each head: Q_h=[T,hd], K_h=[T,hd], V_h=[T,hd]
+        // QK^T: [T, hd] x [hd, T] -> [T, T] via ggml_mul_mat([hd,T], [hd,T]) = [T,T]
         for (int32_t h = 0; h < n_heads; ++h) {
+            // Extract head slices: [T, hd] — need contiguous buffers
+            std::vector<float> Qh(n_frames * hd), Kh(n_frames * hd), Vh(n_frames * hd);
             for (int32_t t = 0; t < n_frames; ++t) {
-                // Window: attend to [max(0, t-window+1), t]
-                int32_t t_start = std::max(0, t - cfg.sliding_window + 1);
-                int32_t win_len  = t - t_start + 1;
+                memcpy(Qh.data() + (size_t)t * hd, Q.data() + (size_t)t * H + (size_t)h * hd, hd * sizeof(float));
+                memcpy(Kh.data() + (size_t)t * hd, K.data() + (size_t)t * H + (size_t)h * hd, hd * sizeof(float));
+                memcpy(Vh.data() + (size_t)t * hd, V.data() + (size_t)t * H + (size_t)h * hd, hd * sizeof(float));
+            }
 
-                // Compute attention scores
-                std::vector<float> scores(win_len);
-                const float * q_t = Q.data() + (size_t)t * H + (size_t)h * hd;
-                for (int32_t s = 0; s < win_len; ++s) {
-                    int32_t src = t_start + s;
-                    const float * k_src = K.data() + (size_t)src * H + (size_t)h * hd;
-                    float dot = 0.0f;
-                    for (int32_t d = 0; d < hd; ++d) dot += q_t[d] * k_src[d];
-                    scores[s] = dot * scale;
+            // QK^T: [T, hd] x [T, hd]^T -> [T, T]
+            // ggml_mul_mat(A=[hd,T], B=[hd,T]) -> [T, T]  where result[i,j] = sum_d A[d,i]*B[d,j]
+            // = K^T * Q  (i=key_pos, j=query_pos) → need transposed
+            // Actually: ggml_mul_mat(K_h_t, Q_h_t) where K_h_t=[hd,T], Q_h_t=[hd,T]
+            // result[k,q] = sum_d K[q_t=k,d]*Q[q_t=q... no
+            // Let's just use the matmul: scores[q,k] = dot(Q[q], K[k])
+            // = ggml_mul_mat(K_h as [hd,T], Q_h as [hd,T]) -> result[T_k, T_q]
+            // result[k,q] = sum_d K_h[d,k] * Q_h[d,q]  (GGML col-major)
+            // Since data is [T,hd] row-major: K_h data at offset k*hd+d = K_h[k,d]
+            // GGML [hd, T] interprets element (d, k) at d + k*hd — matches!
+            std::vector<float> scores_full;
+            if (!matmul_ggml(Kh, n_frames, hd, Qh, n_frames, scores_full)) { ggml_backend_free(backend_cpu); return false; }
+            // scores_full[q*T + k] = dot(K[k], Q[q]) — scores[q,k] ✓
+
+            // Per query: apply full-causal mask, softmax, weighted-V sum
+            for (int32_t t = 0; t < n_frames; ++t) {
+                float * sc_row = scores_full.data() + (size_t)t * n_frames;
+
+                // Full causal mask — no sliding window (Python is_causal=True, no window)
+                for (int32_t k = 0; k < n_frames; ++k) {
+                    if (k > t) sc_row[k] = -1e30f;
+                    else sc_row[k] *= scale;
                 }
-
-                // Softmax
-                float mx = *std::max_element(scores.begin(), scores.end());
-                float sum = 0.0f;
-                for (float & sc : scores) { sc = expf(sc - mx); sum += sc; }
-                for (float & sc : scores) sc /= sum;
+                // Softmax over [0..t]
+                float mx = -1e30f;
+                for (int32_t k = 0; k <= t; ++k) if (sc_row[k] > mx) mx = sc_row[k];
+                float sm = 0.0f;
+                for (int32_t k = 0; k <= t; ++k) { sc_row[k] = expf(sc_row[k] - mx); sm += sc_row[k]; }
+                for (int32_t k = 0; k <= t; ++k) sc_row[k] /= sm;
 
                 // Weighted V
-                float * out_t = attn_out.data() + (size_t)t * H + (size_t)h * hd;
-                for (int32_t s = 0; s < win_len; ++s) {
-                    int32_t src = t_start + s;
-                    const float * v_src = V.data() + (size_t)src * H + (size_t)h * hd;
-                    for (int32_t d = 0; d < hd; ++d) out_t[d] += scores[s] * v_src[d];
+                float * out_h = attn_out.data() + (size_t)t * H + (size_t)h * hd;
+                for (int32_t k = 0; k <= t; ++k) {
+                    const float * vk = Vh.data() + (size_t)k * hd;
+                    float w = sc_row[k];
+                    for (int32_t d = 0; d < hd; ++d) out_h[d] += w * vk[d];
                 }
             }
         }
 
-        // 5. Output projection
-        std::vector<float> attn_proj(n_frames * H, 0.0f);
-        for (int32_t t = 0; t < n_frames; ++t) {
-            const float * in_row = attn_out.data() + (size_t)t * H;
-            float * out_row = attn_proj.data() + (size_t)t * H;
-            for (int32_t o = 0; o < H; ++o) {
-                float s = 0;
-                for (int32_t i = 0; i < H; ++i) s += in_row[i] * o_w[(size_t)o * H + i];
-                out_row[o] = s;
-            }
-        }
+        // 5. Output projection via GGML matmul
+        std::vector<float> attn_proj;
+        if (!matmul_ggml(ly.attn_o_w_f, H, H, attn_out, n_frames, attn_proj)) { ggml_backend_free(backend_cpu); return false; }
 
         // 6. Layer scale + residual
         for (int32_t t = 0; t < n_frames; ++t) {
             for (int32_t d = 0; d < H; ++d) {
                 size_t idx = (size_t)t * H + d;
-                hidden_out[idx] += attn_proj[idx] * attn_scale[d];
+                hidden_out[idx] += attn_proj[idx] * ly.attn_scale_f[d];
             }
         }
 
         // === FFN ===
         // 7. LayerNorm
-        std::vector<float> normed2(n_frames * H);
-        memcpy(normed2.data(), hidden_out.data(), n_frames * H * sizeof(float));
-        apply_layer_norm(normed2.data(), n_frames * H, H,
-                         pn_nw.data(), pn_nb.data(), eps);
+        std::vector<float> normed2(hidden_out);
+        layer_norm(normed2, H, ly.ffn_in_norm_w_f, ly.ffn_in_norm_b_f);
 
-        // 8. fc1 (H -> intermediate) + GELU
-        const int32_t I = cfg.intermediate_size;
-        std::vector<float> ffn_mid(n_frames * I, 0.0f);
-        for (int32_t t = 0; t < n_frames; ++t) {
-            const float * in_row  = normed2.data() + (size_t)t * H;
-            float * out_row = ffn_mid.data() + (size_t)t * I;
-            for (int32_t o = 0; o < I; ++o) {
-                float s = 0;
-                for (int32_t i = 0; i < H; ++i) s += in_row[i] * fc1_w[(size_t)o * H + i];
-                // GELU activation (tanh approximation)
-                float x = s;
-                x = 0.5f * x * (1.0f + tanhf(0.7978845608f * (x + 0.044715f * x * x * x)));
-                out_row[o] = x;
-            }
+        // 8. fc1 via GGML matmul + exact GELU
+        std::vector<float> ffn_mid;
+        if (!matmul_ggml(ly.ffn_fc1_w_f, I, H, normed2, n_frames, ffn_mid)) { ggml_backend_free(backend_cpu); return false; }
+        for (float & v : ffn_mid) {
+            v = 0.5f * v * (1.0f + erff(v * 0.7071067811865476f));
         }
 
-        // 9. fc2 (intermediate -> H)
-        std::vector<float> ffn_out(n_frames * H, 0.0f);
-        for (int32_t t = 0; t < n_frames; ++t) {
-            const float * in_row  = ffn_mid.data() + (size_t)t * I;
-            float * out_row = ffn_out.data() + (size_t)t * H;
-            for (int32_t o = 0; o < H; ++o) {
-                float s = 0;
-                for (int32_t i = 0; i < I; ++i) s += in_row[i] * fc2_w[(size_t)o * I + i];
-                out_row[o] = s;
-            }
-        }
+        // 9. fc2 via GGML matmul
+        std::vector<float> ffn_out;
+        if (!matmul_ggml(ly.ffn_fc2_w_f, H, I, ffn_mid, n_frames, ffn_out)) { ggml_backend_free(backend_cpu); return false; }
 
         // 10. Layer scale + residual
         for (int32_t t = 0; t < n_frames; ++t) {
             for (int32_t d = 0; d < H; ++d) {
                 size_t idx = (size_t)t * H + d;
-                hidden_out[idx] += ffn_out[idx] * ffn_scale[d];
+                hidden_out[idx] += ffn_out[idx] * ly.ffn_scale_f[d];
             }
         }
     }
 
+    ggml_backend_free(backend_cpu);
     return true;
 }
 
@@ -779,10 +827,40 @@ bool MimiEncoder::run_downsample(const std::vector<float> & hidden_in, int32_t n
     }
 
     std::vector<float> w = tensor_to_float(dc.w);
-    // k=4, stride=2, hidden -> hidden, causal pad = 2
-    apply_causal_conv1d(hidden_in.data(), n_frames, H, H,
+    // k=4, stride=2, hidden -> hidden
+    // IMPORTANT: encoder.downsample uses 'replicate' padding (not zero).
+    // Left pad = 2 frames replicated from frame 0.
+    // Extra right-padding uses 'replicate' (copy of last frame) for ceil output frames.
+    int32_t ds_k = 4, ds_stride = 2, ds_pad_left = 2;
+    int32_t padded = n_frames + ds_pad_left;
+    int32_t n_frames_floor = (padded - ds_k) / ds_stride + 1;
+    int64_t n_frames_ceil  = ((int64_t)(padded - ds_k) + ds_stride - 1) / ds_stride + 1;
+
+    // Build padded input: replicate first frame on left, last frame on right
+    int32_t extra_right = 0;
+    if ((int32_t)n_frames_ceil > n_frames_floor) {
+        int32_t ideal_len = (int32_t)((n_frames_ceil - 1) * ds_stride + ds_k - ds_pad_left);
+        extra_right = ideal_len - n_frames;
+        if (extra_right < 0) extra_right = 0;
+    }
+    int32_t ds_in_len = n_frames + ds_pad_left + extra_right;
+    std::vector<float> ds_in((size_t)ds_in_len * H);
+    // Left replicate: copy first frame ds_pad_left times
+    for (int32_t p = 0; p < ds_pad_left; ++p) {
+        memcpy(ds_in.data() + (size_t)p * H, hidden_in.data(), H * sizeof(float));
+    }
+    // Copy actual frames
+    memcpy(ds_in.data() + (size_t)ds_pad_left * H, hidden_in.data(), (size_t)n_frames * H * sizeof(float));
+    // Right replicate: copy last frame extra_right times
+    for (int32_t p = 0; p < extra_right; ++p) {
+        memcpy(ds_in.data() + (size_t)(ds_pad_left + n_frames + p) * H,
+               hidden_in.data() + (size_t)(n_frames - 1) * H, H * sizeof(float));
+    }
+
+    // Now convolve with no padding (we've already padded the input)
+    apply_causal_conv1d(ds_in.data(), ds_in_len, H, H,
                         w.data(), nullptr,
-                        4, 2, 1, 2,
+                        ds_k, ds_stride, 1, 0,  // pad_left=0, already in ds_in
                         hidden_out, n_frames_out);
     return true;
 }
@@ -803,24 +881,23 @@ bool MimiEncoder::run_rvq(const std::vector<float> & latent, int32_t n_frames,
 
     codes_out.resize((size_t)n_frames * NQ, 0);
 
-    // Helper: project [n_frames, H] -> [n_frames, VH] using conv1d k=1
+    // Helper: project [n_frames, H] -> [n_frames, VH] using Conv1d k=1
+    // proj_w PyTorch [VH, H, 1] stored as GGUF bytes [OC=VH, IC=H, K=1]
+    // element (oc, ic) at offset oc * H + ic
     auto project = [&](const std::vector<float> & in, struct ggml_tensor * proj_w,
                         std::vector<float> & out) {
         if (!proj_w) { out = in; return; }
         std::vector<float> pw = tensor_to_float(proj_w);
-        // proj_w Conv1d(H, VH, k=1): PyTorch [VH, H, 1]
-        // GGML stores Conv1d as [K, IC, OC] = [1, H, VH]
-        // → ne[0]=1, ne[1]=H, ne[2]=VH
-        // Flat index: element (k=0, ic, oc) = pw[ic * VH + oc]
         out.assign((size_t)n_frames * VH, 0.0f);
         for (int32_t t = 0; t < n_frames; ++t) {
             const float * in_row  = in.data() + (size_t)t * H;
             float * out_row = out.data() + (size_t)t * VH;
-            for (int32_t ic = 0; ic < H; ++ic) {
-                float val = in_row[ic];
-                for (int32_t oc = 0; oc < VH; ++oc) {
-                    out_row[oc] += val * pw[(size_t)ic * VH + oc];
+            for (int32_t oc = 0; oc < VH; ++oc) {
+                float s = 0.0f;
+                for (int32_t ic = 0; ic < H; ++ic) {
+                    s += in_row[ic] * pw[(size_t)oc * H + ic];
                 }
+                out_row[oc] = s;
             }
         }
     };
@@ -889,7 +966,6 @@ bool MimiEncoder::encode(const float * samples, int32_t n_samples,
     std::vector<float> enc_hidden;
     int32_t enc_frames = 0;
     if (!run_conv_encoder(samples, n_samples, enc_hidden, enc_frames)) return false;
-    fprintf(stderr, "  Mimi: conv encoder -> %d frames\n", enc_frames);
 
     // Step 2: Transformer
     std::vector<float> tfm_hidden;
@@ -899,15 +975,11 @@ bool MimiEncoder::encode(const float * samples, int32_t n_samples,
     std::vector<float> ds_hidden;
     int32_t ds_frames = 0;
     if (!run_downsample(tfm_hidden, enc_frames, ds_hidden, ds_frames)) return false;
-    fprintf(stderr, "  Mimi: after downsample -> %d frames (%.1f Hz)\n",
-            ds_frames, (float)model_.config.sample_rate / ((float)n_samples / ds_frames));
 
     // Step 4: RVQ
     if (!run_rvq(ds_hidden, ds_frames, codes_out)) return false;
 
     n_frames_out = ds_frames;
-    fprintf(stderr, "  Mimi: encoded %d samples -> %d frames x %d codebooks\n",
-            n_samples, ds_frames, model_.config.num_valid_quantizers);
     return true;
 }
 

@@ -176,8 +176,8 @@ bash scripts/run_all_tests.sh           # Full suite
 - F16 model weights cause autoregressive divergence vs Python's float32 — speech codes differ but audio is perceptually equivalent
 - M-RoPE uses 1D positions (equivalent for single-batch, may differ for batched inference)
 - **Batch inference not implemented** — C++ processes one utterance at a time; Python supports batches
-- **ICL voice cloning (full)** — x-vector speaker embedding works; the discrete reference-code ICL path requires a Mimi audio encoder GGUF which is not yet implemented in C++. The `generate_icl()` function on `TTSTransformer` accepts reference codes when available externally.
-- `--top-p` is parsed in CLI params but not used in sampling (top-k only is applied)
+- **ICL voice cloning** — fully implemented. The Mimi audio encoder is loaded from the tokenizer GGUF and achieves 98.9% code match vs Python (F16) / 100% (F32). `generate_icl()` is used when `--ref-text` is provided alongside `--reference`.
+- `--top-p` is parsed and applied in both the main talker and code predictor sampling
 - Top-level CMake expects vendored GGML at `./ggml`
 
 ## Performance Profile

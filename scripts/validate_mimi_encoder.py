@@ -29,8 +29,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_wav_mono_f32(path: Path, target_sr: int = 24000) -> np.ndarray:
-    """Load WAV file, mix to mono float32, resample to target_sr if needed."""
+def load_audio_mono_f32(path: Path, target_sr: int = 24000) -> np.ndarray:
+    """Load audio file (WAV, MP3, FLAC, etc.), mix to mono float32, resample to target_sr.
+    Requires librosa for MP3 and resampling support."""
     try:
         import librosa
         audio, sr = librosa.load(str(path), sr=None, mono=True)
@@ -39,7 +40,13 @@ def load_wav_mono_f32(path: Path, target_sr: int = 24000) -> np.ndarray:
             audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
         return audio.astype(np.float32)
     except ImportError:
-        # Fallback: read WAV manually
+        # Fallback: read WAV manually (no MP3 support without librosa)
+        if str(path).lower().endswith('.mp3'):
+            raise RuntimeError(
+                "MP3 loading requires librosa.\n"
+                "Install it: pip install librosa soundfile\n"
+                "Or use a WAV file instead."
+            )
         data = path.read_bytes()
         if data[:4] != b'RIFF': raise ValueError("Not a WAV")
         pos = 12
@@ -55,16 +62,24 @@ def load_wav_mono_f32(path: Path, target_sr: int = 24000) -> np.ndarray:
                 audio_bytes = data[pos+8:pos+8+csz]
                 break
             pos += 8 + csz
-        if audio_bytes is None: raise ValueError("No data chunk")
+        if audio_bytes is None: raise ValueError("No data chunk in WAV")
         if bits == 16:
             samples = np.frombuffer(audio_bytes, np.int16).astype(np.float32) / 32768.0
+        elif bits == 32:
+            samples = np.frombuffer(audio_bytes, np.float32).copy()
         else:
             raise ValueError(f"Unsupported bit depth {bits}")
         if n_ch > 1:
             samples = samples.reshape(-1, n_ch).mean(axis=1)
         if sr != target_sr:
-            raise RuntimeError(f"Can't resample without librosa. Audio is {sr}Hz, need {target_sr}Hz")
+            raise RuntimeError(
+                f"Cannot resample {sr}→{target_sr} Hz without librosa.\n"
+                "Install: pip install librosa"
+            )
         return samples
+
+# Keep old name as alias for backward compatibility
+load_wav_mono_f32 = load_audio_mono_f32
 
 
 def get_python_codes(audio: np.ndarray, tokenizer_dir: str) -> np.ndarray:
@@ -173,8 +188,9 @@ def print_report(result: dict):
 
 def main():
     parser = argparse.ArgumentParser(description="Validate C++ Mimi encoder vs Python")
-    parser.add_argument("--audio", default="clone.wav",
-                        help="Reference WAV file (24 kHz mono)")
+    parser.add_argument("--audio", default=None,
+                        help="Reference audio file: WAV, MP3, etc. (24 kHz mono preferred). "
+                             "Defaults to audio.mp3 or clone.wav if present.")
     parser.add_argument("--tokenizer-dir", default=None,
                         help="HuggingFace tokenizer directory (for Python encoder)")
     parser.add_argument("--cpp-codes", default=None,
@@ -185,15 +201,27 @@ def main():
                         help="Save Python reference codes")
     args = parser.parse_args()
 
-    audio_path = Path(args.audio) if not Path(args.audio).is_absolute() else Path(args.audio)
-    if not audio_path.exists():
-        audio_path = PROJECT_ROOT / args.audio
+    audio_path = Path(args.audio) if args.audio else None
+
+    # Auto-detect audio file if not specified
+    if audio_path is None:
+        for candidate in ["audio.mp3", "clone.wav", "audio.wav"]:
+            p = PROJECT_ROOT / candidate
+            if p.exists():
+                audio_path = p
+                break
+        if audio_path is None:
+            print("ERROR: No audio file found. Provide --audio or place audio.mp3/clone.wav in project root.")
+            return 1
+    elif not audio_path.is_absolute():
+        if not audio_path.exists():
+            audio_path = PROJECT_ROOT / audio_path
     if not audio_path.exists():
         print(f"ERROR: Audio file not found: {audio_path}")
         return 1
 
     print(f"Loading audio: {audio_path}")
-    audio = load_wav_mono_f32(audio_path)
+    audio = load_audio_mono_f32(audio_path)
     print(f"  {len(audio)} samples @ 24000 Hz = {len(audio)/24000:.2f}s")
 
     # Save audio for C++ test

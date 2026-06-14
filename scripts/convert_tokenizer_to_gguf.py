@@ -321,19 +321,24 @@ class Qwen3TTSTokenizerConverter:
         skipped_count = 0
         skipped_tensors = []
         
-        # Collect embedding_sum and cluster_usage pairs for codebook computation
+        # Collect embed_sum and cluster_usage pairs for codebook normalization.
+        # The Mimi encoder uses "embed_sum" (not "embedding_sum") as the key name.
+        # The normalized codebook = embed_sum / cluster_usage (per entry).
         codebook_pairs: dict[str, dict[str, torch.Tensor]] = {}
 
         logger.info("Processing tensors...")
         all_tensors = list(self._get_tensors())
         
-        # First pass: collect codebook pairs
+        # First pass: collect codebook pairs (both "embed_sum" and "embedding_sum" variants)
         for hf_name, tensor in all_tensors:
-            if "embedding_sum" in hf_name:
-                base_name = hf_name.replace("embedding_sum", "")
+            if "embed_sum" in hf_name or "embedding_sum" in hf_name:
+                # Normalize key to use "EMBED_SUM_KEY" as placeholder
+                key = "embed_sum" if "embed_sum" in hf_name else "embedding_sum"
+                base_name = hf_name.replace(key, "")
                 if base_name not in codebook_pairs:
                     codebook_pairs[base_name] = {}
-                codebook_pairs[base_name]["embedding_sum"] = tensor
+                codebook_pairs[base_name]["embed_sum"] = tensor
+                codebook_pairs[base_name]["embed_sum_key"] = key
             elif "cluster_usage" in hf_name:
                 base_name = hf_name.replace("cluster_usage", "")
                 if base_name not in codebook_pairs:
@@ -353,14 +358,16 @@ class Qwen3TTSTokenizerConverter:
                 skipped_count += 1
                 continue
             
-            # For embedding_sum, compute actual codebook = embedding_sum / cluster_usage
-            if "embedding_sum" in hf_name:
-                base_name = hf_name.replace("embedding_sum", "")
+            # For embed_sum / embedding_sum, normalize: codebook = embed_sum / cluster_usage
+            if "embed_sum" in hf_name or "embedding_sum" in hf_name:
+                key = "embed_sum" if "embed_sum" in hf_name else "embedding_sum"
+                base_name = hf_name.replace(key, "")
                 if base_name in codebook_pairs and "cluster_usage" in codebook_pairs[base_name]:
-                    embedding_sum = codebook_pairs[base_name]["embedding_sum"]
+                    embed_sum = codebook_pairs[base_name]["embed_sum"]
                     cluster_usage = codebook_pairs[base_name]["cluster_usage"]
-                    tensor = embedding_sum / cluster_usage.clamp(min=1e-5).unsqueeze(1)
-                    logger.debug(f"  Computing codebook from embedding_sum/cluster_usage for {hf_name}")
+                    # embed_sum: [codebook_size, codebook_dim], cluster_usage: [codebook_size]
+                    tensor = embed_sum / cluster_usage.clamp(min=1e-5).unsqueeze(1)
+                    logger.debug(f"  Normalizing codebook for {hf_name} (embed_sum / cluster_usage)")
 
             # Convert tensor
             data, dtype = self._convert_dtype(tensor, ggml_name)

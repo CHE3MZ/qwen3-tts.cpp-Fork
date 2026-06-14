@@ -13,6 +13,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
+elseif(MSVC)
+    # Parallel compilation within each target (significant speedup for large files)
+    add_compile_options(/MP)
+    # Fast math for Release builds
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /fp:fast")
 endif()
 
 # Timing instrumentation option
@@ -189,6 +194,9 @@ target_link_libraries(qwen3_tts PUBLIC
     audio_tokenizer_decoder
     Threads::Threads
 )
+if(WIN32)
+    target_link_libraries(qwen3_tts PUBLIC psapi)
+endif()
 
 # Shared library with C API (for Nim FFI)
 add_library(qwen3tts_shared SHARED
@@ -250,6 +258,15 @@ target_link_libraries(test_decoder PRIVATE
     Threads::Threads
 )
 
+# Test executable for Mimi encoder (validates ICL reference audio encoding)
+add_executable(test_mimi_encoder
+    tests/test_mimi_encoder.cpp
+)
+target_link_libraries(test_mimi_encoder PRIVATE
+    mimi_encoder
+    Threads::Threads
+)
+
 # Install targets
 install(TARGETS text_tokenizer tts_transformer audio_tokenizer_encoder audio_tokenizer_decoder qwen3_tts qwen3tts_shared qwen3-tts-cli
     ARCHIVE DESTINATION lib
@@ -285,5 +302,13 @@ add_test(NAME transformer_test
 )
 add_test(NAME decoder_test
     COMMAND test_decoder
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_test(NAME mimi_encoder_test
+    COMMAND test_mimi_encoder
+        --tokenizer models/qwen3-tts-tokenizer-f16.gguf
+        --audio clone.wav
+        --ref-codes reference/mimi_enc_py_codes.bin
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )

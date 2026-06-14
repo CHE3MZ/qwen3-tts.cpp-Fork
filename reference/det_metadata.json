@@ -1,6 +1,6 @@
 {
-  "model_path": "/Users/andyye/dev/qwen3-tts.cpp/models/Qwen3-TTS-12Hz-0.6B-Base",
-  "reference_audio": "/Users/andyye/dev/qwen3-tts.cpp/clone.wav",
+  "model_path": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\models\\Qwen3-TTS-12Hz-0.6B-Base",
+  "reference_audio": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\clone.wav",
   "reference_text": "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.",
   "synthesis_text": "Hello.",
   "language": "English",
@@ -55,11 +55,15 @@
       1024
     ],
     "speech_codes": [
+      7,
+      16
+    ],
+    "speech_codes_nonstreaming": [
       63,
       16
     ],
     "hidden_states": [
-      63,
+      7,
       1024
     ],
     "first_frame_logits": [
@@ -67,7 +71,7 @@
       3072
     ],
     "decoded_audio": [
-      120960
+      13440
     ]
   },
   "outputs": {
@@ -88,7 +92,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 4096,
-      "sha256": "61b45d744253a62f1f6e7fa804cf95b1c043568a13e96663bbb15b5eebc9e610"
+      "sha256": "233d4d78684bb0b5e993e575133d5efed30f20b8009add8f6a37d310e9418077"
     },
     "det_prefill_embedding.bin": {
       "path": "det_prefill_embedding.bin",
@@ -99,27 +103,37 @@
       ],
       "dtype": "float32",
       "size_bytes": 40960,
-      "sha256": "4b76b0af54ffe7edb476d0e2ce97408e730446579033d28f60232264584222fc"
+      "sha256": "9526f5497faeb323bf497053cb85a54535c542c8e5db59b8477a6bdd993988a3"
     },
     "det_speech_codes.bin": {
       "path": "det_speech_codes.bin",
+      "shape": [
+        7,
+        16
+      ],
+      "dtype": "int64",
+      "size_bytes": 896,
+      "sha256": "fa90a1bf63563da71b7c3d54aef79a3c269a09801304a85439b9610d9ea2d91b"
+    },
+    "det_speech_codes_nonstreaming.bin": {
+      "path": "det_speech_codes_nonstreaming.bin",
       "shape": [
         63,
         16
       ],
       "dtype": "int64",
       "size_bytes": 8064,
-      "sha256": "f0a9f60c562c2d928335307bde7b5350a39032f6d3c4b942db3b1b36f7d81d9e"
+      "sha256": "fcfd7df2e727f86fb3b9d76dd4d54897d91b6bcf803a5a49a9ba7c076350fae0"
     },
     "det_hidden_states.bin": {
       "path": "det_hidden_states.bin",
       "shape": [
-        63,
+        7,
         1024
       ],
       "dtype": "float32",
-      "size_bytes": 258048,
-      "sha256": "8bc3b19d786d084299d730ae150f87dd61eba99fef23ad2c76cb8d53c302a2fc"
+      "size_bytes": 28672,
+      "sha256": "23ae110d277f1ba3579a3b2744b4752108eb1567454ff1ce01ad3af338a75962"
     },
     "det_first_frame_logits.bin": {
       "path": "det_first_frame_logits.bin",
@@ -129,16 +143,16 @@
       ],
       "dtype": "float32",
       "size_bytes": 12288,
-      "sha256": "2b7ee95bf2de54288915386f308aa1960b5d2ad14dfc4ea2c507bd80f769ba17"
+      "sha256": "08ba467631ce07f58e114997fc2d9a4bbbc7ae39c06f0641fad7ce692d118cf3"
     },
     "det_decoded_audio.bin": {
       "path": "det_decoded_audio.bin",
       "shape": [
-        120960
+        13440
       ],
       "dtype": "float32",
-      "size_bytes": 483840,
-      "sha256": "272629dfd827d37068aede054c1c3ecb81126c199bdcdd4f5ef0f3301a340c87"
+      "size_bytes": 53760,
+      "sha256": "0040a29667a87922971e5c1e6afd251cc6362a30b23f3d4ff0dd54dcf48771c3"
     },
     "det_trailing_text.bin": {
       "path": "det_trailing_text.bin",
@@ -149,7 +163,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 8192,
-      "sha256": "0be99c99c0607ed5c53a0a00053d3f1bc79c11c5a7147ef494d19942a493a1e7"
+      "sha256": "fe236ab1d06ccd0ac408ee581f4018bdd3d6639cffbdfabec149d23fcd47cbde"
     },
     "det_tts_pad_embed.bin": {
       "path": "det_tts_pad_embed.bin",
@@ -160,7 +174,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 4096,
-      "sha256": "0289fcdb42b3c45e829204dd7de66fd40e1453c00bbce21b3eb866a84d9090df"
+      "sha256": "1d6040f89102bdcb93f627ab3afbb7fd1c16c4a14255064fc6c6806e41ba9ada"
     },
     "det_role_embed.bin": {
       "path": "det_role_embed.bin",
@@ -171,7 +185,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 12288,
-      "sha256": "a86c059b76c30723e14c1db6af475d19f38e0af62256f9e7da2bbb35a4e53d14"
+      "sha256": "0094ac03e672c561ff1aac8d915624065ce882c77ba03b0a3c16212fc6bec452"
     },
     "det_codec_prefill_embed.bin": {
       "path": "det_codec_prefill_embed.bin",
@@ -182,7 +196,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 24576,
-      "sha256": "a500ed897cf2c50f35371bde2d77591dbf188b1887a9273cdc6c14d8756b1be5"
+      "sha256": "807008a7566b83aaa3800cdf090cd9371f28119b39bd0af22e0d79eb9f319e20"
     },
     "det_tts_overlay.bin": {
       "path": "det_tts_overlay.bin",
@@ -193,15 +207,15 @@
       ],
       "dtype": "float32",
       "size_bytes": 24576,
-      "sha256": "807974ed068af06247d7efdf153364637d9d5973bdb6ee9e1a139e3fabe0bab3"
+      "sha256": "6b13e20a7b6611a4e138e899c5d820174fd727400b67499aa700512c43dca7c7"
     }
   },
   "wav": {
     "path": "det_output.wav",
-    "sha256": "18422e7f86adfdffa81dd3fbfa16e7c554c37b648550409697a9007c9fed2e50",
+    "sha256": "b69e7ee4e964dfd4e0fb0fabfc2892549f1a70637c2116cf3ccd5717c0dd9755",
     "sample_rate": 24000,
-    "num_samples": 120960,
-    "duration_seconds": 5.04
+    "num_samples": 13440,
+    "duration_seconds": 0.56
   },
   "prefill_token_types": "det_prefill_token_types.json"
 }

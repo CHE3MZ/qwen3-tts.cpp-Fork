@@ -2,7 +2,8 @@
 #include "gguf_loader.h"
 #include "ggml-cpu.h"
 
-#include <cmath>
+// M_PI is not defined by default on MSVC — use literal instead
+static constexpr float k_pi = 3.14159265358979323846f;
 #include <cstring>
 #include <algorithm>
 #include <numeric>
@@ -98,7 +99,7 @@ static void compute_dft(const float * input, float * real, float * imag, int n) 
         real[k] = 0.0f;
         imag[k] = 0.0f;
         for (int t = 0; t < n; ++t) {
-            float angle = -2.0f * M_PI * k * t / n;
+            float angle = -2.0f * k_pi * k * t / n;
             real[k] += input[t] * cosf(angle);
             imag[k] += input[t] * sinf(angle);
         }
@@ -108,7 +109,7 @@ static void compute_dft(const float * input, float * real, float * imag, int n) 
 // Periodic Hann window (matches torch.hann_window with periodic=True, which is default)
 static void compute_hann_window(float * window, int n) {
     for (int i = 0; i < n; ++i) {
-        window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / n));
+        window[i] = 0.5f * (1.0f - cosf(2.0f * k_pi * i / n));
     }
 }
 
@@ -120,7 +121,7 @@ static void compute_centered_window(float * window, int n_fft, int win_length) {
     // Compute Hann window of win_length
     int offset = (n_fft - win_length) / 2;
     for (int i = 0; i < win_length; ++i) {
-        window[offset + i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / win_length));
+        window[offset + i] = 0.5f * (1.0f - cosf(2.0f * k_pi * i / win_length));
     }
 }
 

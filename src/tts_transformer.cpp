@@ -2496,9 +2496,16 @@ bool TTSTransformer::predict_codes_autoregressive_coreml(const float * hidden,
     return true;
 }
 
+// Forward declaration — defined later in this file before generate()
+static int32_t sample_token(
+    std::vector<float> & logits, int32_t vocab_size, int32_t eos_id,
+    int32_t suppress_start, const std::unordered_set<int32_t> & gen_tokens,
+    float repetition_penalty, float temperature, int32_t top_k, float top_p,
+    std::vector<float> & probs, std::mt19937 & rng);
+
 bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t codebook_0_token,
                                                    std::vector<int32_t> & output,
-                                                   float temperature, int32_t top_k) {
+                                                   float temperature, int32_t top_k, float top_p) {
     if (!model_.ctx) {
         error_msg_ = "Model not loaded";
         return false;
@@ -2540,7 +2547,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         std::vector<float> lv(logits_ptr, logits_ptr + vocab_size);
         return sample_token(lv, vocab_size, -1 /*no eos*/, vocab_size /*suppress none*/,
                             empty_set, 1.0f /*no rep penalty*/,
-                            temperature, top_k, 1.0f /*top_p: sub-talker uses 1.0*/,
+                            temperature, top_k, top_p /*sub-talker top_p*/,
                             code_probs, rng_);
     };
     
@@ -2944,14 +2951,14 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         t0 = clk::now();
 #endif
         std::vector<int32_t> codes_1_15;
-        if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0], codes_1_15, sub_temp, sub_top_k)) {
+        if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0], codes_1_15, sub_temp, sub_top_k, top_p)) {
             return false;
         }
 #ifdef QWEN3_TTS_TIMING
         t1 = clk::now();
         timing.t_code_pred_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-        
+
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) {
             frame_codes[cb] = codes_1_15[cb - 1];
         }
@@ -3328,7 +3335,7 @@ bool TTSTransformer::generate_icl(
 
         std::vector<int32_t> codes_1_15;
         if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0],
-                                           codes_1_15, sub_temp, sub_topk)) {
+                                           codes_1_15, sub_temp, sub_topk, top_p)) {
             return false;
         }
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) frame_codes[cb] = codes_1_15[cb - 1];
@@ -3422,7 +3429,7 @@ bool TTSTransformer::generate_from_prefill(
         // Predict CB1-15
         std::vector<int32_t> codes_1_15;
         if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0],
-                                           codes_1_15, sub_temp, sub_topk)) {
+                                           codes_1_15, sub_temp, sub_topk, top_p)) {
             return false;
         }
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) frame_codes[cb] = codes_1_15[cb-1];
