@@ -212,14 +212,23 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     encoder_loaded_     = false;
 
     // ---- Locate TTS model file (supports 0.6b and 1.7b) ----------------
-    // Priority: q8_0 > f16, 1.7b > 0.6b
+    // Priority: q8_0 > f16, 1.7b > 0.6b; also handles q5_k and q6_k
     const char * candidates[] = {
         "qwen3-tts-1.7b-q8_0.gguf",
+        "qwen3-tts-1.7b-q6_k.gguf",
+        "qwen3-tts-1.7b-q5_k.gguf",
+        "qwen3-tts-1.7b-q4_k.gguf",
         "qwen3-tts-1.7b-f16.gguf",
         "qwen3-tts-0.6b-q8_0.gguf",
+        "qwen3-tts-0.6b-q6_k.gguf",
+        "qwen3-tts-0.6b-q5_k.gguf",
+        "qwen3-tts-0.6b-q4_k.gguf",
         "qwen3-tts-0.6b-f16.gguf",
         // Generic fallback pattern
         "qwen3-tts-q8_0.gguf",
+        "qwen3-tts-q6_k.gguf",
+        "qwen3-tts-q5_k.gguf",
+        "qwen3-tts-q4_k.gguf",
         "qwen3-tts-f16.gguf",
         nullptr
     };
