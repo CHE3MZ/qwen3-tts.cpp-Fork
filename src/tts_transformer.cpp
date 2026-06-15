@@ -1454,17 +1454,14 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
         
+        // prefill: use soft_max_ext + causal mask (multi-token, mask required for correctness)
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         K = ggml_permute(ctx0, K, 0, 2, 1, 3);
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
         KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
@@ -1599,18 +1596,14 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past) {
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
         
+        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
+        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
-        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
-        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
-        KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
-        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        
-        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
-        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
+        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
+        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         
@@ -1720,17 +1713,12 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
         
+        // flash attention for code predictor (single token, full attention — no causal mask needed)
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        struct ggml_tensor * K = ggml_permute(ctx0, Kcur, 0, 2, 1, 3);
-        struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
-        
-        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        // ggml_soft_max_ext fuses scale+softmax (no causal mask — full attention)
-        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        
-        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
-        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+        struct ggml_tensor * K = ggml_cont(ctx0, ggml_permute(ctx0, Kcur, 0, 2, 1, 3));
+        struct ggml_tensor * V = ggml_cont(ctx0, ggml_permute(ctx0, Vcur, 0, 2, 1, 3));
+        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, 1);
         
@@ -1863,17 +1851,14 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k_cache_view));
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v_cache_view));
         
+        // code predictor prefill: use soft_max_ext + causal mask (2-token, mask required)
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         struct ggml_tensor * K = ggml_permute(ctx0, Kcur, 0, 2, 1, 3);
         struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
-        
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        // ggml_soft_max_ext fuses scale+softmax (causal mask from position 0)
         KQ = ggml_diag_mask_inf(ctx0, KQ, 0);
         KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
@@ -2019,18 +2004,14 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
         
+        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
+        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
-        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
-        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
-        KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
-        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        
-        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
-        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
+        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
+        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         
