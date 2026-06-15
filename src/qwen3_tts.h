@@ -5,6 +5,7 @@
 #include "audio_tokenizer_encoder.h"
 #include "audio_tokenizer_decoder.h"
 #include "mimi_encoder.h"
+#include "ggml-backend.h"   /* for ggml_abort_callback */
 
 #include <string>
 #include <vector>
@@ -40,6 +41,39 @@ struct tts_params {
     float   subtalker_temperature = -1.0f;
     int32_t subtalker_top_k       = -1;
     float   subtalker_top_p       = -1.0f;  // -1.0 = inherit from main top_p
+
+    // min_p sampling: keep tokens where prob >= min_p * max_prob.
+    // More principled than top-p for TTS codec tokens. 0.0 = disabled.
+    float   min_p = 0.0f;
+
+    // Frequency penalty: subtract (freq_penalty * token_count) from logit.
+    // Reduces probability proportionally to how often a token has appeared.
+    // 0.0 = disabled. Recommended range: 0.0–0.5 for codec tokens.
+    float   frequency_penalty = 0.0f;
+
+    // Presence penalty: subtract presence_penalty from logit if token appeared at all.
+    // Flat penalty regardless of count. 0.0 = disabled.
+    float   presence_penalty = 0.0f;
+
+    // DRY (Don't Repeat Yourself) n-gram repetition penalty.
+    // Penalises tokens that would extend an already-seen token sequence.
+    // dry_multiplier: penalty scale (0.0 = disabled, 0.8 is a good start)
+    // dry_base:       exponential growth per extra repeated token (default 1.75)
+    // dry_allowed_length: min repeated n-gram length before penalising (default 2)
+    // dry_penalty_last_n: how many recent tokens to scan (-1 = all generated, 0 = disabled)
+    float   dry_multiplier      = 0.0f;
+    float   dry_base            = 1.75f;
+    int32_t dry_allowed_length  = 2;
+    int32_t dry_penalty_last_n  = -1;
+
+    // Dynamic temperature: scale temperature by entropy of the distribution.
+    // When enabled, temperature is adapted per token: low entropy → lower temp,
+    // high entropy → higher temp, preventing both over-confidence and chaos.
+    // dyntemp_range: half-range of temperature variation around `temperature`.
+    //   effective_temp = temperature ± dyntemp_range  (0.0 = disabled)
+    // dyntemp_exponent: shaping exponent (1.0 = linear, default).
+    float   dyntemp_range    = 0.0f;
+    float   dyntemp_exponent = 1.0f;
 
     // Language: "auto", "english", "chinese", "japanese", "korean",
     //            "russian", "german", "french", "spanish", "italian", …
@@ -224,6 +258,11 @@ public:
 
     // ---- Misc ----------------------------------------------------------
     void set_progress_callback(tts_progress_callback_t callback);
+
+    // Abort callback — cancels synthesis mid-graph compute.
+    // fn(data) returns true → abort. Pass nullptr to clear.
+    void set_abort_callback(ggml_abort_callback fn, void * userdata);
+    void clear_abort_callback();
 
     // Per-frame logits callback — called once per generated codec frame.
     // Provides CB0 logits (talker output) and the sampled CB0 token.

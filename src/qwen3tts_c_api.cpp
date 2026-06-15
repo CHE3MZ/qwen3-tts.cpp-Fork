@@ -73,6 +73,16 @@ static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p,
     out.non_streaming_mode    = (p->non_streaming_mode != 0);
     out.print_timing          = (p->print_timing != 0);
     out.print_progress        = (p->print_progress != 0);
+    // Extended sampling params
+    out.min_p                 = p->min_p;
+    out.frequency_penalty     = p->frequency_penalty;
+    out.presence_penalty      = p->presence_penalty;
+    out.dry_multiplier        = p->dry_multiplier;
+    out.dry_base              = p->dry_base;
+    out.dry_allowed_length    = p->dry_allowed_length;
+    out.dry_penalty_last_n    = p->dry_penalty_last_n;
+    out.dyntemp_range         = p->dyntemp_range;
+    out.dyntemp_exponent      = p->dyntemp_exponent;
     if (p->language_name[0] != '\0') out.language = p->language_name;
     else if (p->language_id > 0)     out.language = std::to_string(p->language_id);
     if (p->speaker[0]  != '\0') out.speaker  = p->speaker;
@@ -138,6 +148,16 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
     p->non_streaming_mode    = 0;
     p->print_timing          = 0;
     p->print_progress        = 0;
+    // Extended sampling — all disabled by default
+    p->min_p                 = 0.0f;
+    p->frequency_penalty     = 0.0f;
+    p->presence_penalty      = 0.0f;
+    p->dry_multiplier        = 0.0f;
+    p->dry_base              = 1.75f;
+    p->dry_allowed_length    = 2;
+    p->dry_penalty_last_n    = -1;
+    p->dyntemp_range         = 0.0f;
+    p->dyntemp_exponent      = 1.0f;
     std::strncpy(p->language_name, "auto", sizeof(p->language_name) - 1);
 }
 
@@ -218,6 +238,20 @@ void qwen3_tts_set_progress_callback(Qwen3Tts * tts,
 
 void qwen3_tts_clear_progress_callback(Qwen3Tts * tts) {
     qwen3_tts_set_progress_callback(tts, nullptr, nullptr);
+}
+
+// ---- abort callback ---------------------------------------------------------
+
+void qwen3_tts_set_abort_callback(Qwen3Tts * tts,
+                                   ggml_abort_callback fn,
+                                   void * userdata) {
+    if (!tts) return;
+    tts->engine.set_abort_callback(fn, userdata);
+}
+
+void qwen3_tts_clear_abort_callback(Qwen3Tts * tts) {
+    if (!tts) return;
+    tts->engine.clear_abort_callback();
 }
 
 // ---- introspection ----------------------------------------------------------

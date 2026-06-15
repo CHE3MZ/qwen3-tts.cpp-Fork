@@ -1,4 +1,58 @@
-# Handoff: TTS port feature-complete — optional polish remaining
+# Handoff: TTS port complete + GGML/llama.cpp optimizations applied
+<!-- Last updated: 2026-06-15 -->
+
+## Summary
+`qwen3-tts.cpp-Fork` is production-ready and feature-complete. A major optimization pass was applied adopting patterns from llama.cpp, whisper.cpp, and ggml. All tests pass (6 PASS 1 WARN 0 FAIL). Flash attention remains as the one remaining high-impact improvement (medium effort, requires V-cache layout change).
+
+## Objective
+Flash attention (`ggml_flash_attn_ext`) is the remaining high-value item. All other improvements have been applied. Optionally, begin the same treatment on `qwen3-asr.cpp-Fork` using `../how-i-did-it.md`.
+
+## Status
+
+### Completed (this session — GGML optimizations)
+* **`ggml_soft_max_ext`** — replaced all 5 `ggml_scale + ggml_diag_mask_inf + ggml_soft_max` chains across all graph builders with the fused `ggml_soft_max_ext(ctx, KQ, nullptr, KQscale, 0.0f)`. Eliminates one graph node per attention layer per forward pass.
+* **Persistent threadpool** (`ggml_threadpool`) — `set_n_threads()` now creates/reuses a `ggml_threadpool` via `ggml_threadpool_params_default` + `ggml_backend_cpu_set_threadpool`. Eliminates OS thread create/destroy overhead for every graph compute call. Freed on `unload_model()`.
+* **Abort callback** — `TTSTransformer::set_abort_callback()` + `clear_abort_callback()` wired via `ggml_backend_cpu_set_abort_callback`. Exposed as `qwen3_tts_set_abort_callback` / `qwen3_tts_clear_abort_callback` in C API. Enables cancelling synthesis mid-graph.
+* **Eval callback** — `set_eval_callback()` wired via `ggml_backend_sched_set_eval_callback`. Zero cost when not set. Enables per-node debugging/profiling without modifying graphs.
+* **Extended sampling** (from llama.cpp `llama-sampler.cpp`):
+  - **`min_p`** — keep tokens where prob ≥ min_p × max_prob; more principled than top-p
+  - **Frequency penalty** — subtract `freq_penalty × count` from logit; prevents proportional repetition
+  - **Presence penalty** — flat penalty if token appeared at all
+  - **DRY** (Don't Repeat Yourself) — n-gram penalty that targets exact sequence repetitions; most surgical anti-loop tool
+  - **Dynamic temperature** — entropy-adaptive temperature; scales per-token between `temp ± dyntemp_range`
+  - All exposed in `tts_params`, `Qwen3TtsParams` (C API), and `qwen3_tts_default_params()` (all default to 0/disabled = backward compatible)
+  - Legacy `sample_token()` wrapper preserved; all existing call-sites unchanged
+  - Token history + count tracking added to `generate()` loop for DRY/freq/presence
+
+### Previously completed (all earlier sessions)
+* Full pipeline, ICL, CustomVoice, VoiceDesign, streaming, codes access, logits callback, chunk callback, server mode, Q5K/Q6K, all 12 bug fixes, C API contract, WAV robustness
+
+## Decisions
+* All new sampling params default to 0/disabled — zero behavior change unless explicitly set
+* Extended params stored as `ext_*` members on `TTSTransformer`, set via `set_extended_sampling()` before each generate call — avoids changing the generate() signature
+* `sample_token_params` struct added for clean extensibility; legacy positional overload preserved as a thin wrapper
+* Threadpool created lazily on first `set_n_threads()` call and recreated only when thread count changes
+
+## Non-Obvious Findings (new)
+* `ggml_backend_cpu_set_abort_callback` and `ggml_threadpool_*` require `ggml-cpu.h` — it was missing from `tts_transformer.h`, causing "undeclared identifier" errors until added
+* `ggml_backend_get_reg` / proc_address pattern from reference libraries does NOT exist in our vendored ggml — use `ggml_backend_cpu_set_abort_callback` directly
+* `std::min` inside CRLF files on Windows/clang-cl: already known issue; replaced with ternary in new code
+
+## Open Issues (all optional/blocked)
+* **Flash attention** (`ggml_flash_attn_ext`) — next high-value item. Requires: KV padding to `GGML_PAD(n_ctx, 256)`, V stored non-transposed, all graph builders updated. Medium effort, ~200 lines.
+* Batch inference — architectural, ~600 lines, best done after GPU
+* GPU (CUDA) — needs CUDA toolkit install
+
+## Next Steps
+1. Flash attention: update `init_kv_cache` to pad to 256, change V storage in all 5 graph builders, replace `ggml_diag_mask_inf + soft_max_ext` with `ggml_flash_attn_ext`
+2. Or: start `qwen3-asr.cpp-Fork` treatment — see `../how-i-did-it.md`
+
+## References
+* C API (full, with all new callbacks + sampling params): `src/qwen3tts_c_api.h`
+* Extended sampling params: `src/qwen3_tts.h` (`tts_params` struct)
+* Transformer optimizations: `src/tts_transformer.h` (`set_extended_sampling`, `set_abort_callback`, `set_eval_callback`, `set_n_threads` with threadpool)
+* Run transformer test: `build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf --ref-dir reference --max-len 64`
+* Methodology guide: `../how-i-did-it.md`
 <!-- Last updated: 2026-06-15 -->
 
 ## Summary

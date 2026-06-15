@@ -23,6 +23,7 @@
 #define QWEN3TTS_C_API_H
 
 #include <stdint.h>
+#include "ggml.h"   /* for ggml_abort_callback */
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +82,22 @@ typedef struct Qwen3TtsParams {
     /* ---- Output ---- */
     int32_t print_timing;           /* 1=print timing to stderr (default) */
     int32_t print_progress;         /* 1=print per-token progress to stderr */
+
+    /* ---- Extended sampling (from llama.cpp reference) ---- */
+    /* All default to 0/disabled for backward compatibility.  */
+    float   min_p;              /* keep tokens where prob >= min_p * max_prob (0=off)  */
+    float   frequency_penalty; /* subtract freq_pen * count from logit (0=off)         */
+    float   presence_penalty;  /* subtract presence_pen if token ever appeared (0=off) */
+
+    /* DRY (Don't Repeat Yourself) n-gram penalty                                      */
+    float   dry_multiplier;     /* penalty scale; 0=disabled, try 0.8                  */
+    float   dry_base;           /* exponential base per extra repeated token (def 1.75)*/
+    int32_t dry_allowed_length; /* min n-gram length before penalising (default 2)     */
+    int32_t dry_penalty_last_n; /* context window (-1=all generated tokens, 0=off)     */
+
+    /* Dynamic temperature (entropy-adaptive)                                          */
+    float   dyntemp_range;      /* half-range of temp variation; 0=disabled            */
+    float   dyntemp_exponent;   /* shaping exponent (1.0=linear, default)              */
 } Qwen3TtsParams;
 
 /* -------------------------------------------------------------------
@@ -175,6 +192,15 @@ void qwen3_tts_set_progress_callback(Qwen3Tts * tts,
                                       void * userdata);
 
 void qwen3_tts_clear_progress_callback(Qwen3Tts * tts);
+
+/* -------------------------------------------------------------------
+ * Abort callback — cancels generation mid-graph (e.g. user pressed stop).
+ * callback(data) returns true → abort current graph compute.
+ * ------------------------------------------------------------------- */
+void qwen3_tts_set_abort_callback(Qwen3Tts * tts,
+                                   ggml_abort_callback fn,
+                                   void * userdata);
+void qwen3_tts_clear_abort_callback(Qwen3Tts * tts);
 
 /* -------------------------------------------------------------------
  * Model introspection

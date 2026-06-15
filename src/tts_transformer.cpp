@@ -10,6 +10,7 @@
 #include <numeric>
 #include <random>
 #include <unordered_set>
+#include <unordered_map>
 #include <cstdlib>
 #include <cctype>
 #include <sys/stat.h>
@@ -43,6 +44,11 @@ void TTSTransformer::unload_model() {
     if (state_.sched) {
         ggml_backend_sched_free(state_.sched);
         state_.sched = nullptr;
+    }
+    if (state_.threadpool) {
+        ggml_threadpool_free(state_.threadpool);
+        state_.threadpool     = nullptr;
+        state_.threadpool_n   = 0;
     }
     if (state_.backend) {
         release_preferred_backend(state_.backend);
@@ -155,7 +161,12 @@ bool TTSTransformer::load_model(const std::string & model_path) {
         error_msg_ = "Failed to create backend scheduler";
         return false;
     }
-    
+
+    // Wire eval callback if it was set before load (unlikely but safe)
+    if (state_.eval_cb) {
+        ggml_backend_sched_set_eval_callback(state_.sched, state_.eval_cb, state_.eval_cb_data);
+    }
+
     state_.compute_meta.resize(ggml_tensor_overhead() * QWEN3_TTS_MAX_NODES + ggml_graph_overhead());
 
     if (!try_init_coreml_code_predictor(model_path)) {
@@ -840,13 +851,33 @@ void TTSTransformer::clear_kv_cache() {
 
 void TTSTransformer::set_n_threads(int32_t n_threads) {
     if (n_threads <= 0) return;
-    // Apply to CPU backend (no-op if using GPU backend)
-    if (state_.backend_cpu) {
-        ggml_backend_cpu_set_n_threads(state_.backend_cpu, n_threads);
-    } else if (state_.backend) {
+
+    // Determine which CPU backend handle to configure
+    ggml_backend_t cpu_backend = state_.backend_cpu ? state_.backend_cpu : nullptr;
+    if (!cpu_backend && state_.backend) {
         ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
         if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
-            ggml_backend_cpu_set_n_threads(state_.backend, n_threads);
+            cpu_backend = state_.backend;
+        }
+    }
+
+    if (cpu_backend) {
+        ggml_backend_cpu_set_n_threads(cpu_backend, n_threads);
+
+        // Create or recreate the persistent threadpool when thread count changes.
+        // This eliminates the OS thread create/destroy overhead for every
+        // graph compute — critical for TTS which does hundreds of small computes.
+        if (state_.threadpool_n != n_threads) {
+            if (state_.threadpool) {
+                ggml_threadpool_free(state_.threadpool);
+                state_.threadpool = nullptr;
+            }
+            struct ggml_threadpool_params tp_params = ggml_threadpool_params_default(n_threads);
+            state_.threadpool = ggml_threadpool_new(&tp_params);
+            if (state_.threadpool) {
+                ggml_backend_cpu_set_threadpool(cpu_backend, state_.threadpool);
+                state_.threadpool_n = n_threads;
+            }
         }
     }
 }
@@ -1428,9 +1459,9 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
         
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_scale(ctx0, KQ, KQscale);
+        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
-        KQ = ggml_soft_max(ctx0, KQ);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
         
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
         
@@ -1573,9 +1604,9 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past) {
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
         
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_scale(ctx0, KQ, KQscale);
+        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
-        KQ = ggml_soft_max(ctx0, KQ);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
         
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
         
@@ -1694,8 +1725,8 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
         struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
         
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_scale(ctx0, KQ, KQscale);
-        KQ = ggml_soft_max(ctx0, KQ);
+        // ggml_soft_max_ext fuses scale+softmax (no causal mask — full attention)
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
         
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
         
@@ -1837,9 +1868,9 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
         struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
         
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_scale(ctx0, KQ, KQscale);
+        // ggml_soft_max_ext fuses scale+softmax (causal mask from position 0)
         KQ = ggml_diag_mask_inf(ctx0, KQ, 0);
-        KQ = ggml_soft_max(ctx0, KQ);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
         
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
         
@@ -1993,9 +2024,9 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
         
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_scale(ctx0, KQ, KQscale);
+        // ggml_soft_max_ext fuses scale+softmax into one kernel (one fewer graph node)
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
-        KQ = ggml_soft_max(ctx0, KQ);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
         
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
         
@@ -2525,6 +2556,17 @@ static int32_t sample_token(
     float repetition_penalty, float temperature, int32_t top_k, float top_p,
     std::vector<float> & probs, std::mt19937 & rng);
 
+// Forward declaration for the struct-based overload
+struct sample_token_params;
+static int32_t sample_token(
+    std::vector<float> & logits,
+    const std::unordered_set<int32_t> & gen_tokens,
+    const std::vector<int32_t> * token_history,
+    const std::unordered_map<int32_t,int32_t> * token_counts,
+    std::vector<float> & probs,
+    std::mt19937 & rng,
+    const sample_token_params & p);
+
 bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t codebook_0_token,
                                                    std::vector<int32_t> & output,
                                                    float temperature, int32_t top_k, float top_p) {
@@ -2767,6 +2809,201 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
 // generate_from_prefill().
 // Returns the sampled token index.
 // ---------------------------------------------------------------------------
+// Extended token sampler — supports all sampling strategies adopted from llama.cpp.
+// Parameters beyond the original set default to "disabled" (0.0f or -1) so
+// existing call-sites that pass fewer args are unaffected.
+struct sample_token_params {
+    int32_t vocab_size       = 0;
+    int32_t eos_id           = -1;
+    int32_t suppress_start  = INT32_MAX;   // suppress [suppress_start, vocab_size) except eos
+    float   repetition_penalty = 1.0f;     // HuggingFace multiplicative rep penalty
+    float   frequency_penalty  = 0.0f;     // subtract freq_penalty * count from logit
+    float   presence_penalty   = 0.0f;     // subtract presence_penalty if token ever appeared
+    float   temperature        = 1.0f;     // 0 = greedy
+    float   dyntemp_range      = 0.0f;     // dynamic temperature half-range; 0 = disabled
+    float   dyntemp_exponent   = 1.0f;     // dynamic temperature shaping exponent
+    int32_t top_k              = 0;        // 0 = disabled
+    float   top_p              = 1.0f;     // 1.0 = disabled
+    float   min_p              = 0.0f;     // 0.0 = disabled; keep tokens >= min_p * max_prob
+    float   dry_multiplier     = 0.0f;     // DRY penalty scale; 0 = disabled
+    float   dry_base           = 1.75f;    // DRY exponential growth base
+    int32_t dry_allowed_length = 2;        // min n-gram length before DRY penalises
+    int32_t dry_penalty_last_n = -1;       // context window for DRY (-1 = all tokens)
+};
+
+static int32_t sample_token(
+        std::vector<float> & logits,
+        const std::unordered_set<int32_t> & gen_tokens,      // for rep/freq/presence penalties
+        const std::vector<int32_t> * token_history,           // for DRY; nullptr = disabled
+        const std::unordered_map<int32_t,int32_t> * token_counts, // token -> count for freq/presence
+        std::vector<float> & probs,
+        std::mt19937 & rng,
+        const sample_token_params & p) {
+
+    const int32_t V = p.vocab_size;
+
+    // 1. Suppress range [suppress_start, V) except EOS
+    for (int32_t i = p.suppress_start; i < V; ++i) {
+        if (i != p.eos_id) logits[i] = -INFINITY;
+    }
+
+    // 2. Repetition + frequency + presence penalties
+    if (p.repetition_penalty != 1.0f || p.frequency_penalty != 0.0f || p.presence_penalty != 0.0f) {
+        for (int32_t tok : gen_tokens) {
+            if (tok < 0 || tok >= V) continue;
+            // Repetition penalty (HuggingFace multiplicative style)
+            if (p.repetition_penalty != 1.0f) {
+                if (logits[tok] > 0.0f) logits[tok] /= p.repetition_penalty;
+                else                    logits[tok] *= p.repetition_penalty;
+            }
+            // Frequency penalty (additive, proportional to count)
+            if (p.frequency_penalty != 0.0f && token_counts) {
+                auto it = token_counts->find(tok);
+                if (it != token_counts->end())
+                    logits[tok] -= p.frequency_penalty * (float)it->second;
+            }
+            // Presence penalty (flat additive if token appeared at all)
+            if (p.presence_penalty != 0.0f)
+                logits[tok] -= p.presence_penalty;
+        }
+    }
+
+    // 3. DRY (Don't Repeat Yourself) n-gram penalty — from llama.cpp
+    // Penalises any token that would extend a pattern already seen in the context.
+    if (p.dry_multiplier != 0.0f && token_history && !token_history->empty()) {
+        const auto & hist = *token_history;
+        int32_t n_hist = (int32_t)hist.size();
+        int32_t scan_len = (p.dry_penalty_last_n < 0)
+                          ? n_hist
+                          : (int32_t)std::min((int32_t)n_hist, p.dry_penalty_last_n);
+
+        // For each candidate token, find the longest suffix in recent history
+        // that matches the end of history + candidate token
+        for (int32_t tok = 0; tok < V; ++tok) {
+            if (!std::isfinite(logits[tok])) continue;
+            // Build candidate sequence: last dry_allowed_length-1 tokens + tok
+            int32_t max_match = 0;
+            for (int32_t i = 1; i < scan_len; ++i) {
+                if (hist[n_hist - 1 - (i - 1)] != tok) {
+                    // Check if the suffix ending at position (n_hist-1-i) matches
+                    // the last (match_len) tokens
+                    continue;
+                }
+                // hist[n_hist-1-i] == tok: potential match of length 1+
+                int32_t match = 1;
+                while (match < p.dry_allowed_length && match <= i &&
+                       hist[n_hist - 1 - (i + match - 1)] ==
+                       hist[n_hist - 1 - (match - 1)]) {
+                    ++match;
+                }
+                if (match > max_match) max_match = match;
+            }
+            if (max_match >= p.dry_allowed_length) {
+                // Exponential penalty: multiplier * base^(match - allowed_length)
+                float penalty = p.dry_multiplier *
+                    powf(p.dry_base, (float)(max_match - p.dry_allowed_length));
+                logits[tok] -= penalty;
+            }
+        }
+    }
+
+    // 4. Greedy if temperature == 0
+    if (p.temperature <= 0.0f) {
+        return argmax(logits.data(), V);
+    }
+
+    // 5. Dynamic temperature — adapt temp based on distribution entropy
+    float eff_temp = p.temperature;
+    if (p.dyntemp_range > 0.0f) {
+        // Compute softmax entropy at base temperature
+        float mx = *std::max_element(logits.data(), logits.data() + V);
+        double sum_e = 0.0;
+        for (int32_t i = 0; i < V; ++i) sum_e += expf((logits[i] - mx) / p.temperature);
+        float entropy = 0.0f;
+        for (int32_t i = 0; i < V; ++i) {
+            float pi = expf((logits[i] - mx) / p.temperature) / (float)sum_e;
+            if (pi > 1e-10f) entropy -= pi * logf(pi);
+        }
+        float max_entropy = logf((float)V);
+        float norm_entropy = (max_entropy > 0.0f) ? (entropy / max_entropy) : 0.5f;
+        float t_factor = powf(norm_entropy, p.dyntemp_exponent);
+        eff_temp = p.temperature - p.dyntemp_range + 2.0f * p.dyntemp_range * t_factor;
+        if (eff_temp < 1e-5f) eff_temp = 1e-5f;
+    }
+
+    // 6. Temperature scaling
+    for (int32_t i = 0; i < V; ++i) logits[i] /= eff_temp;
+
+    // 7. Top-k filtering
+    if (p.top_k > 0 && p.top_k < V) {
+        std::vector<std::pair<float,int32_t>> sc(V);
+        for (int32_t i = 0; i < V; ++i) sc[i] = {logits[i], i};
+        std::partial_sort(sc.begin(), sc.begin() + p.top_k, sc.end(),
+            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
+                return a.first > b.first;
+            });
+        float thr = sc[p.top_k - 1].first;
+        for (int32_t i = 0; i < V; ++i) if (logits[i] < thr) logits[i] = -INFINITY;
+    }
+
+    // 8. Top-p (nucleus) filtering
+    if (p.top_p > 0.0f && p.top_p < 1.0f) {
+        float mx = *std::max_element(logits.data(), logits.data() + V);
+        std::vector<std::pair<float,int32_t>> sp(V);
+        double sum_p = 0.0;
+        for (int32_t i = 0; i < V; ++i) {
+            float prob = expf(logits[i] - mx);
+            sp[i] = {prob, i};
+            sum_p += prob;
+        }
+        for (auto & x : sp) x.first /= (float)sum_p;
+        std::sort(sp.begin(), sp.end(),
+            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
+                return a.first > b.first;
+            });
+        float cumul = 0.0f, cutoff = 0.0f;
+        for (auto & x : sp) {
+            cumul += x.first;
+            cutoff = x.first;
+            if (cumul >= p.top_p) break;
+        }
+        for (int32_t i = 0; i < V; ++i) {
+            float prob = expf(logits[i] - mx) / (float)sum_p;
+            if (prob < cutoff) logits[i] = -INFINITY;
+        }
+    }
+
+    // 9. min_p filtering: keep tokens where prob >= min_p * max_prob
+    if (p.min_p > 0.0f) {
+        float mx = *std::max_element(logits.data(), logits.data() + V);
+        double sum_e = 0.0;
+        for (int32_t i = 0; i < V; ++i) sum_e += expf(logits[i] - mx);
+        float max_prob = 1.0f;  // prob of argmax is always 1 after normalisation = exp(0)/sum
+        float threshold = p.min_p * max_prob;
+        for (int32_t i = 0; i < V; ++i) {
+            float prob = expf(logits[i] - mx) / (float)sum_e;
+            if (prob < threshold) logits[i] = -INFINITY;
+        }
+    }
+
+    // 10. Softmax → sample
+    float mx = *std::max_element(logits.data(), logits.data() + V);
+    if (!std::isfinite(mx)) return 0;  // all suppressed, safe fallback
+    double sum = 0.0;
+    probs.resize(V);
+    for (int32_t i = 0; i < V; ++i) {
+        probs[i] = expf(logits[i] - mx);
+        sum += probs[i];
+    }
+    for (int32_t i = 0; i < V; ++i) probs[i] = (float)(probs[i] / sum);
+    std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
+    return dist(rng);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy wrapper — preserves the old call signature used throughout the file.
+// New code should use the struct-based overload directly.
+// ---------------------------------------------------------------------------
 static int32_t sample_token(
         std::vector<float> & logits,
         int32_t vocab_size,
@@ -2779,91 +3016,15 @@ static int32_t sample_token(
         float top_p,
         std::vector<float> & probs,
         std::mt19937 & rng) {
-
-    // 1. Suppress [suppress_start, vocab_size) except EOS
-    for (int32_t i = suppress_start; i < vocab_size; ++i) {
-        if (i != eos_id) logits[i] = -INFINITY;
-    }
-
-    // 2. Repetition penalty (HuggingFace style)
-    if (repetition_penalty != 1.0f) {
-        for (int32_t tok : gen_tokens) {
-            if (tok >= 0 && tok < vocab_size) {
-                if (logits[tok] > 0.0f) logits[tok] /= repetition_penalty;
-                else                    logits[tok] *= repetition_penalty;
-            }
-        }
-    }
-
-    // 3. Greedy if temperature == 0
-    if (temperature <= 0.0f) {
-        return argmax(logits.data(), vocab_size);
-    }
-
-    // 4. Temperature scaling
-    for (int32_t i = 0; i < vocab_size; ++i) logits[i] /= temperature;
-
-    // 5. Top-k filtering
-    if (top_k > 0 && top_k < vocab_size) {
-        std::vector<std::pair<float,int32_t>> sc(vocab_size);
-        for (int32_t i = 0; i < vocab_size; ++i) sc[i] = {logits[i], i};
-        std::partial_sort(sc.begin(), sc.begin() + top_k, sc.end(),
-            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
-                return a.first > b.first;
-            });
-        float thr = sc[top_k - 1].first;
-        for (int32_t i = 0; i < vocab_size; ++i) if (logits[i] < thr) logits[i] = -INFINITY;
-    }
-
-    // 6. Top-p (nucleus) filtering — applied after top_k, matches HuggingFace order
-    if (top_p > 0.0f && top_p < 1.0f) {
-        float mx = *std::max_element(logits.data(), logits.data() + vocab_size);
-        // Compute unnormalised probs for sorting
-        std::vector<std::pair<float,int32_t>> sp(vocab_size);
-        double sum_p = 0.0;
-        for (int32_t i = 0; i < vocab_size; ++i) {
-            float p = expf(logits[i] - mx);
-            sp[i] = {p, i};
-            sum_p += p;
-        }
-        // Normalise
-        for (auto & x : sp) x.first /= (float)sum_p;
-        std::sort(sp.begin(), sp.end(),
-            [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
-                return a.first > b.first;
-            });
-        // Find cutoff: accumulate until >= top_p
-        float cumul = 0.0f, cutoff = 0.0f;
-        for (auto & x : sp) {
-            cumul += x.first;
-            cutoff = x.first;
-            if (cumul >= top_p) break;
-        }
-        // Mask below cutoff
-        for (int32_t i = 0; i < vocab_size; ++i) {
-            float p = expf(logits[i] - mx) / (float)sum_p;
-            if (p < cutoff) logits[i] = -INFINITY;
-        }
-    }
-
-    // 7. Softmax → sample
-    // Guard: if all logits are -inf (e.g. after aggressive top-k + suppress),
-    // fall back to argmax to avoid NaN from expf(-inf - -inf).
-    float mx = *std::max_element(logits.data(), logits.data() + vocab_size);
-    if (!std::isfinite(mx)) {
-        // All tokens suppressed — return token 0 as safe fallback
-        return 0;
-    }
-    double sum = 0.0;
-    probs.resize(vocab_size);
-    for (int32_t i = 0; i < vocab_size; ++i) {
-        probs[i] = expf(logits[i] - mx);
-        sum += probs[i];
-    }
-    for (int32_t i = 0; i < vocab_size; ++i) probs[i] = (float)(probs[i] / sum);
-
-    std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
-    return dist(rng);
+    sample_token_params p;
+    p.vocab_size        = vocab_size;
+    p.eos_id            = eos_id;
+    p.suppress_start    = suppress_start;
+    p.repetition_penalty = repetition_penalty;
+    p.temperature       = temperature;
+    p.top_k             = top_k;
+    p.top_p             = top_p;
+    return sample_token(logits, gen_tokens, nullptr, nullptr, probs, rng, p);
 }
 
 bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
@@ -2963,12 +3124,36 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     std::vector<float> probs(cfg.codec_vocab_size);
     std::vector<float> step_embd(cfg.hidden_size, 0.0f);
     std::vector<float> embd_row(cfg.hidden_size);
-    
+
+    // Token history and counts for extended sampling (freq/presence/DRY penalties)
+    std::vector<int32_t>            cb0_token_history;
+    std::unordered_map<int32_t,int32_t> cb0_token_counts;
+
+    // Build the sampling params struct once — reused every frame
+    sample_token_params stp;
+    stp.vocab_size         = cfg.codec_vocab_size;
+    stp.eos_id             = cfg.codec_eos_id;
+    stp.suppress_start     = suppress_start;
+    stp.repetition_penalty = repetition_penalty;
+    stp.frequency_penalty  = ext_frequency_penalty;
+    stp.presence_penalty   = ext_presence_penalty;
+    stp.temperature        = temperature;
+    stp.dyntemp_range      = ext_dyntemp_range;
+    stp.dyntemp_exponent   = ext_dyntemp_exponent;
+    stp.top_k              = top_k;
+    stp.top_p              = top_p;
+    stp.min_p              = ext_min_p;
+    stp.dry_multiplier     = ext_dry_multiplier;
+    stp.dry_base           = ext_dry_base;
+    stp.dry_allowed_length = ext_dry_allowed_length;
+    stp.dry_penalty_last_n = ext_dry_penalty_last_n;
+
     for (int frame = 0; frame < max_len; ++frame) {
         int32_t next_token = sample_token(
-            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
-            generated_cb0_tokens, repetition_penalty,
-            temperature, top_k, top_p, probs, rng_);
+            logits, generated_cb0_tokens,
+            (ext_dry_multiplier != 0.0f) ? &cb0_token_history : nullptr,
+            (ext_frequency_penalty != 0.0f || ext_presence_penalty != 0.0f) ? &cb0_token_counts : nullptr,
+            probs, rng_, stp);
 
         if (next_token == cfg.codec_eos_id) {
             break;
@@ -2976,6 +3161,10 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
+
+        // Track token history and counts for DRY / frequency / presence penalties
+        cb0_token_history.push_back(next_token);
+        cb0_token_counts[next_token]++;
 
         // Fire per-frame logits callback — caller can inspect raw CB0 logits
         // and the sampled token, and return non-zero to stop generation early.

@@ -2,6 +2,7 @@
 
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "ggml-cpu.h"
 #include "gguf.h"
 #include "coreml_code_predictor.h"
 
@@ -196,11 +197,25 @@ struct tts_transformer_state {
     ggml_backend_t backend = nullptr;
     ggml_backend_t backend_cpu = nullptr;
     ggml_backend_sched_t sched = nullptr;
-    
+
     std::vector<uint8_t> compute_meta;
-    
+
     tts_kv_cache cache;           // Talker KV cache (28 layers)
     tts_kv_cache code_pred_cache; // Code predictor KV cache (5 layers)
+
+    // Persistent thread pool — avoids per-compute thread create/destroy overhead.
+    // One thread is created per physical core (capped at n_threads).
+    struct ggml_threadpool * threadpool     = nullptr;
+    int32_t                  threadpool_n   = 0;  // n_threads the pool was created for
+
+    // Abort callback — set by set_abort_callback(); passed into ggml_backend_sched_graph_compute.
+    // Returning true from the callback cancels the current graph compute.
+    ggml_abort_callback abort_cb      = nullptr;
+    void *              abort_cb_data = nullptr;
+
+    // Eval callback — fires for every graph node; use for debugging/profiling.
+    ggml_backend_sched_eval_callback eval_cb      = nullptr;
+    void *                           eval_cb_data = nullptr;
 };
 
 // TTS Transformer class
@@ -323,13 +338,64 @@ public:
                                 int32_t subtalker_top_k = -1,
                                 float subtalker_top_p = -1.0f);
 
-    // Set a per-frame logits callback.  Called in the generate loop after
+    // Set extended sampling parameters used by the generate loop.
+    // Call before generate() / generate_icl() / generate_from_prefill().
+    void set_extended_sampling(
+        float   min_p              = 0.0f,
+        float   frequency_penalty  = 0.0f,
+        float   presence_penalty   = 0.0f,
+        float   dry_multiplier     = 0.0f,
+        float   dry_base           = 1.75f,
+        int32_t dry_allowed_length = 2,
+        int32_t dry_penalty_last_n = -1,
+        float   dyntemp_range      = 0.0f,
+        float   dyntemp_exponent   = 1.0f) {
+        ext_min_p              = min_p;
+        ext_frequency_penalty  = frequency_penalty;
+        ext_presence_penalty   = presence_penalty;
+        ext_dry_multiplier     = dry_multiplier;
+        ext_dry_base           = dry_base;
+        ext_dry_allowed_length = dry_allowed_length;
+        ext_dry_penalty_last_n = dry_penalty_last_n;
+        ext_dyntemp_range      = dyntemp_range;
+        ext_dyntemp_exponent   = dyntemp_exponent;
+    }
     // CB0 logits are ready, before sampling.  Return non-zero to stop early.
     // Pass nullptr to clear.
     // Callback signature: (frame_idx, cb0_logits, cb0_logits_size, cb0_token) → int
     using logits_cb_t = std::function<int(int32_t, const float *, int32_t, int32_t)>;
     void set_logits_callback(logits_cb_t cb) { logits_cb_ = std::move(cb); }
     void clear_logits_callback() { logits_cb_ = nullptr; }
+
+    // Abort callback — cancels the current graph compute mid-flight.
+    // callback returns true → abort. Pass nullptr to clear.
+    void set_abort_callback(ggml_abort_callback cb, void * userdata) {
+        state_.abort_cb      = cb;
+        state_.abort_cb_data = userdata;
+        // Wire into the CPU backend using the vendored ggml API
+        ggml_backend_t cpu_backend = state_.backend_cpu ? state_.backend_cpu : nullptr;
+        if (!cpu_backend && state_.backend) {
+            ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
+            if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU)
+                cpu_backend = state_.backend;
+        }
+        if (cpu_backend) {
+            ggml_backend_cpu_set_abort_callback(cpu_backend, cb, userdata);
+        }
+    }
+    void clear_abort_callback() { set_abort_callback(nullptr, nullptr); }
+
+    // Eval callback — fires for every graph node during compute.
+    // When ask==true, return true to observe this node's output tensor.
+    // When ask==false, the computed tensor is passed in; return false to cancel.
+    void set_eval_callback(ggml_backend_sched_eval_callback cb, void * userdata) {
+        state_.eval_cb      = cb;
+        state_.eval_cb_data = userdata;
+        if (state_.sched) {
+            ggml_backend_sched_set_eval_callback(state_.sched, cb, userdata);
+        }
+    }
+    void clear_eval_callback() { set_eval_callback(nullptr, nullptr); }
 
     const tts_transformer_config & get_config() const { return model_.config; }
 
@@ -425,6 +491,19 @@ private:
 
     // Optional per-frame logits callback (set via set_logits_callback)
     logits_cb_t logits_cb_;
+
+    // Extended sampling parameters — set by qwen3_tts.cpp before calling generate().
+    // These extend the basic temperature/top_k/top_p/rep_penalty params that are
+    // passed directly to generate(). Default values disable all extensions.
+    float   ext_min_p             = 0.0f;
+    float   ext_frequency_penalty = 0.0f;
+    float   ext_presence_penalty  = 0.0f;
+    float   ext_dry_multiplier    = 0.0f;
+    float   ext_dry_base          = 1.75f;
+    int32_t ext_dry_allowed_length = 2;
+    int32_t ext_dry_penalty_last_n = -1;
+    float   ext_dyntemp_range     = 0.0f;
+    float   ext_dyntemp_exponent  = 1.0f;
 
 #ifdef QWEN3_TTS_TIMING
     tts_timing * timing_ = nullptr;

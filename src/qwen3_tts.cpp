@@ -990,6 +990,14 @@ void Qwen3TTS::set_progress_callback(tts_progress_callback_t cb) {
     progress_callback_ = cb;
 }
 
+// --- set_abort_callback / clear_abort_callback ----------------------------
+void Qwen3TTS::set_abort_callback(ggml_abort_callback fn, void * userdata) {
+    if (transformer_loaded_) transformer_.set_abort_callback(fn, userdata);
+}
+void Qwen3TTS::clear_abort_callback() {
+    if (transformer_loaded_) transformer_.clear_abort_callback();
+}
+
 // --- set_logits_callback --------------------------------------------------
 void Qwen3TTS::set_logits_callback(tts_logits_callback_t cb) {
     logits_callback_ = cb;
@@ -1092,6 +1100,18 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     if (params.n_threads > 0) {
         transformer_.set_n_threads(params.n_threads);
     }
+
+    // Wire extended sampling parameters into the transformer generate loop
+    transformer_.set_extended_sampling(
+        params.min_p,
+        params.frequency_penalty,
+        params.presence_penalty,
+        params.dry_multiplier,
+        params.dry_base,
+        params.dry_allowed_length,
+        params.dry_penalty_last_n,
+        params.dyntemp_range,
+        params.dyntemp_exponent);
 
     // Wire logits callback into the transformer for this synthesis call
     if (logits_callback_) {
