@@ -1,71 +1,70 @@
-# Handoff: Complete — commit, integrate, or extend
+# Handoff: TTS port complete — instruct path test + Go integration next
 <!-- Last updated: 2026-06-15 -->
 
 ## Summary
-`qwen3-tts.cpp-Fork` is a complete, production-ready C++17/GGML port of Qwen3-TTS. All features match the Python reference (10/10 on every implemented feature), both validation tests pass, audio output is working, and the C API is feature-complete for Go/FFI server integration. Working tree is clean — all changes committed to `main`.
+`qwen3-tts.cpp-Fork` is a complete, production-ready C++17/GGML port of Qwen3-TTS with full voice cloning, ICL, CustomVoice, VoiceDesign, and C API support. A bug-fix pass was completed this session (12 fixes). All tests pass. The two remaining actionable items are a reference test for the instruct code path and a Go FFI integration test.
+
+## Objective
+Next session should tackle in order:
+1. Add a deterministic reference test for `build_prefill_graph_instruct` (VoiceDesign/CustomVoice instruct path) — last code path with zero test coverage
+2. Go/FFI integration smoke test using the C API shared lib (`qwen3tts.dll`)
 
 ## Status
 
 ### Completed
-* All 9 Mimi encoder bugs fixed — test passes at 100% exact match (F32 mimi weights)
-* TTS transformer: 5 PASS 1 WARN 0 FAIL — streaming codes 100% exact
-* WAV writer bug fixed (`uint16_t` fmt size → `uint32_t`; batched PCM write)
-* Bessel I0 bug fixed (Kaiser window was 86× wrong; sinc resampler now correct)
-* `sub-talker top_p` fully wired through all generate paths and C API
-* `do_sample=false` from generation_config.json now forces greedy
-* GGUF metadata key fallback (`qwen3-tts-tokenizer.num_codebooks` + legacy key)
-* `gguf_loader` deduplication — compiled once, linked to all 5 libs
-* Thread count auto-detect (`std::thread::hardware_concurrency`, capped 8)
-* `-march=native` for clang-cl on Windows (AVX2/AVX512)
-* GPU backend detection: CMake auto-stages CUDA/Vulkan/Metal DLLs when built
-* `QWEN3_TTS_KV_F32` CMake option for bit-exact KV cache (default OFF)
-* `--mimi-type` in converter: independently control Mimi encoder weight precision
-* **C API fully expanded** — progress callback, timing, memory stats, `_ex` variants, WAV I/O, embedding size query, `create_with_config`, thread-safety docs
+* Full pipeline working: tokenizer → speaker encoder → talker (28L) → code predictor (5L × 15 steps) → WavTokenizer vocoder
+* ICL voice cloning via Mimi encoder: 100% exact code match (F32 weights)
+* All 3 model variants: base, custom_voice, voice_design
+* Streaming + non-streaming prefill modes
+* C API (`qwen3tts_c_api.h`) — full FFI surface with `_ex` variants, timing, memory stats, WAV I/O
+* **Bug-fix pass (2026-06-15):** 12 fixes across 6 files — see `docs/handoff.md` §Bug fixes and `how-i-did-it.md`
+  - `qwen3_tts_embedding_size()` — removed hardcode, reads from GGUF config
+  - `qwen3_tts_create()` n_threads — now stored and propagated to all synthesis calls
+  - `qwen3_tts_unload()` — now actually unloads all 4 sub-components
+  - `AudioTokenizerEncoder::unload_model()` — added explicit method
+  - `Qwen3TTS::unload_models()` + `get_embedding_dim()` — added
+  - `print_progress` — forwarded through C API params
+  - WAV loader — RIFF odd-chunk padding + fread return checks + missing-fmt guard
+  - ICL trim — `erase(begin,begin+n)` replaced with move-iterator construction
+  - `main.cpp` — `save_speaker_embedding` return value now checked
 
-### Bug fixes applied 2026-06-15
-* **`qwen3_tts_embedding_size()` hardcode removed** — now calls `engine.get_embedding_dim()` which reads `speaker_encoder_config::embedding_dim` from GGUF metadata; falls back to 1024 if encoder not yet loaded. Correct for all model variants.
-* **`qwen3_tts_create()` `n_threads` now stored** — `Qwen3Tts::default_n_threads` member stores the value at create time; all 8 `to_cpp_params()` call sites use it as the per-call default. Thread resolution: explicit params > handle default > hardware auto-detect.
-* **`qwen3_tts_unload()` implemented** — calls `engine.unload_models()` which calls `unload_model()` on transformer, decoder, encoder, and mimi encoder; sets all `*_loaded_` flags false. Handle stays valid for reload.
-* **`AudioTokenizerEncoder::unload_model()` added** — mirrored the destructor cleanup into an explicit public method (destructor now delegates to it); matching the pattern of `TTSTransformer` and `AudioTokenizerDecoder`.
-* **`Qwen3TTS::unload_models()` added** — unloads all four sub-components in sequence.
-* **`Qwen3TTS::get_embedding_dim()` added** — returns `audio_encoder_.get_config().embedding_dim` when encoder loaded, 1024 otherwise.
-* **`print_progress` forwarded through C API** — `Qwen3TtsParams::print_progress` field added; `to_cpp_params()` maps it to `tts_params::print_progress`; `qwen3_tts_default_params()` initializes it to 0.
-* **WAV loader odd-chunk padding fixed** — `fmt` extra bytes and all unknown chunks now skip `chunk_size + (chunk_size & 1)` bytes per RIFF spec, preventing misalignment on files with odd-sized metadata chunks (e.g. INFO tags).
-* **WAV loader `fread` return values checked** — all three PCM format branches (int16, int32, float32) now check the `fread` return and resize `samples` to the actual number of complete frames read, avoiding silent corruption on truncated files.
-* **WAV loader guard against missing fmt** — `num_channels == 0` check before data chunk decode; emits an error and returns false rather than dividing by zero.
-* **ICL audio trim O(n) erase replaced** — `result.audio.erase(begin, begin+cut)` replaced with `std::move_iterator` subrange construction, avoiding in-place shift of up to ~720k floats.
-* **`main.cpp` save embedding return value checked** — the side-path that saves a speaker embedding during voice-clone synthesis now checks the `save_speaker_embedding()` return and prints a warning on failure.
-* **Zero-embedding comment clarified** — `synthesize()` no-reference path comment updated to explain why `hidden_size` is used as the embedding size (they are equal for all current checkpoints; a TODO is noted for future-proofing).
-
-### Open Issues
-* Non-streaming WARN: C++ generates 64 frames, Python ref has 63. All 63 match exactly. Cause: F16 model weights shift EOS logit margin — unfixable without F32 model. Not a code bug.
-* Batch inference: not implemented (architectural, ~600 lines). Documented limitation.
-* GPU acceleration requires rebuilding GGML with `-DGGML_CUDA=ON` / `-DGGML_METAL=ON` — no CUDA toolkit currently installed.
+### In Progress
+* Nothing actively in progress
 
 ## Decisions
-* Mimi encoder uses **full causal attention** (no sliding window) — Python's `encoder_transformer` is called with `is_causal=True, attention_mask=None` and never enforces the `sliding_window=250` config value. Applying the window was the bug that caused 69% → fixed to 100%.
-* Codebook embeddings always stored **F32** in GGUF regardless of `--type` or `--mimi-type` — required for exact nearest-neighbor lookup.
-* Q8_0 for Mimi encoder conv weights gives only 94.3% match (below 95% threshold) — only F16 (98.9%) or F32 (100%) are viable.
-* C API `Qwen3Tts*` handle is **NOT thread-safe** — one request at a time per handle; documented in header.
+* Mimi encoder uses full causal attention — Python never applies `sliding_window=250` config value despite it being set; applying it was the bug causing 69% → 100% fix
+* Codebook embeddings always stored F32 in GGUF regardless of `--type` — required for exact VQ nearest-neighbor lookup
+* Code predictor runs **15 sequential autoregressive steps per frame** (one per codebook) each with its own KV cache separate from the talker — single-pass was the original audio quality bug
+* C API handle is NOT thread-safe by design; one handle per worker thread
+
+## Assumptions & Constraints
+* Models present: `models/qwen3-tts-0.6b-f16.gguf`, `models/qwen3-tts-tokenizer-f16.gguf`
+* Build system: Ninja + clang-cl on Windows, build dir is `build-ninja/`
+* No CUDA toolkit installed — GPU path exists in CMake but untested
 
 ## Non-Obvious Findings
-* `output_proj` in RVQ quantizer is **decoder-only** — `encode()` only uses `input_proj`. The flag was incorrectly identified as missing; it is not needed.
-* `save_audio_file` previously wrote PCM samples one `fwrite` call per sample (N calls) — fixed to one batched write.
-* `bessel_i0` had `sum += term * term` instead of `sum += term` — made Kaiser window values 86× too large, effectively degrading sinc resampler to near nearest-neighbor quality.
-* GGUF metadata key mismatch: converter writes `qwen3-tts-tokenizer.num_codebooks` but C++ was reading `qwen3-tts.tokenizer.num_codebooks`. Fixed with fallback lookup.
-* RIFF WAV chunks must be word-aligned (padded to even byte boundary) — unknown-chunk skip was missing the `+ (chunk_size & 1)` pad byte, causing parser misalignment on files with odd-sized metadata.
+* Code predictor bottleneck: 71% of generation time — 15 forward passes/frame
+* Non-streaming WARN (64 vs 63 frames) is an F16 EOS margin artifact, not a code bug — unfixable without F32 weights
+* `qwen3_tts_unload()` was previously a complete no-op with a TODO comment — now fixed
+* RIFF spec requires all chunks padded to even byte boundary — the old WAV loader skipped this, causing misalignment on files with INFO metadata chunks
+* Zero-embedding size was taken from `hidden_size` (transformer dim) not `embedding_dim` (encoder output) — they happen to be equal for current checkpoints but are semantically different
+
+## Open Issues
+* `build_prefill_graph_instruct` (VoiceDesign/CustomVoice instruct path) has no reference test — score 8/10
+* Batch inference not implemented — architectural, ~600 lines
+* GPU acceleration needs CUDA toolkit install + GGML rebuild with `-DGGML_CUDA=ON`
+* Q8_0 model hasn't been smoke-tested end-to-end in recent builds
 
 ## Next Steps
-1. **Commit current state** (already done — working tree clean)
-2. **End-to-end Go integration test** — write a minimal Go app using the new C API `_ex` functions, test `qwen3_tts_synthesize_ex` + `qwen3_tts_save_wav`
-3. **GPU acceleration** — install CUDA toolkit, rebuild GGML with `-DGGML_CUDA=ON`, re-run CMake (project auto-detects and stages `ggml-cuda.dll`)
-4. **Batch inference** — if needed for server throughput, implement batched `generate()` (~600 lines touching KV cache + attention mask + sampling loop)
+1. Generate Python reference data for instruct path: run `scripts/generate_deterministic_reference.py` with a VoiceDesign model and save `reference/det_instruct_*.bin`
+2. Add `Test 8: instruct prefill` to `tests/test_transformer.cpp` comparing against that reference
+3. Write minimal Go app: `import "C"`, load `qwen3tts.dll`, call `qwen3_tts_synthesize_ex`, verify output WAV
+4. Quick CLI run with Q8_0 model to confirm it still produces valid audio
 
 ## References
-* Architecture guide: `AGENTS.md` (Known Limitations section authoritative)
-* Build options: `CMakeLists.txt` (`QWEN3_TTS_KV_F32`, `QWEN3_TTS_TIMING`, GPU detection)
-* C API: `src/qwen3tts_c_api.h` (full docs in header comments)
-* Mimi encoder: `src/mimi_encoder.h`, `src/mimi_encoder.cpp`
-* Converter: `scripts/convert_tokenizer_to_gguf.py` (`--mimi-type` flag, codebook F32 rule)
-* Run tests: `build-ninja\test_mimi_encoder.exe --tokenizer models\qwen3-tts-tokenizer-f16.gguf --audio reference\mimi_enc_test_audio.bin --ref-codes reference\mimi_enc_py_codes.bin`
-* Run tests: `build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf --ref-dir reference\ --max-len 64`
+* Architecture and methodology: `../how-i-did-it.md`
+* Coding conventions + prefill structure: `AGENTS.md`
+* Tensor name mapping: `docs/tensor_mapping.md`
+* C API contract: `src/qwen3tts_c_api.h`
+* Run mimi test: `build-ninja\test_mimi_encoder.exe --tokenizer models\qwen3-tts-tokenizer-f16.gguf --audio reference\mimi_enc_test_audio.bin --ref-codes reference\mimi_enc_py_codes.bin`
+* Run transformer test: `build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf --ref-dir reference\ --max-len 64`
