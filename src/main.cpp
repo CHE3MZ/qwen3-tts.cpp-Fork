@@ -204,8 +204,12 @@ int main(int argc, char ** argv) {
         // Save embedding if requested
         if (!embedding_out.empty()) {
             std::vector<float> embedding;
-            if (tts.extract_speaker_embedding(reference_audio, embedding))
-                tts.save_speaker_embedding(embedding_out, embedding);
+            if (tts.extract_speaker_embedding(reference_audio, embedding)) {
+                if (!tts.save_speaker_embedding(embedding_out, embedding)) {
+                    fprintf(stderr, "Warning: failed to save embedding to %s\n",
+                            embedding_out.c_str());
+                }
+            }
         }
     } else {
         fprintf(stderr, "Synthesizing: \"%s\"\n", text.c_str());

@@ -80,6 +80,7 @@ typedef struct Qwen3TtsParams {
 
     /* ---- Output ---- */
     int32_t print_timing;           /* 1=print timing to stderr (default) */
+    int32_t print_progress;         /* 1=print per-token progress to stderr */
 } Qwen3TtsParams;
 
 /* -------------------------------------------------------------------

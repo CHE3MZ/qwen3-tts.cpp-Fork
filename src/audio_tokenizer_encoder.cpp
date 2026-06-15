@@ -128,8 +128,12 @@ static void compute_centered_window(float * window, int n_fft, int win_length) {
 AudioTokenizerEncoder::AudioTokenizerEncoder() = default;
 
 AudioTokenizerEncoder::~AudioTokenizerEncoder() {
+    unload_model();
+}
+
+void AudioTokenizerEncoder::unload_model() {
     free_speaker_encoder_model(model_);
-    
+
     if (state_.sched) {
         ggml_backend_sched_free(state_.sched);
         state_.sched = nullptr;

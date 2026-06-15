@@ -364,6 +364,27 @@ bool Qwen3TTS::load_generation_config(const std::string & json_path) {
     return true;
 }
 
+// --- unload_models ---------------------------------------------------------
+void Qwen3TTS::unload_models() {
+    if (transformer_loaded_) {
+        transformer_.unload_model();
+        transformer_loaded_ = false;
+    }
+    if (decoder_loaded_) {
+        audio_decoder_.unload_model();
+        decoder_loaded_ = false;
+    }
+    if (encoder_loaded_) {
+        audio_encoder_.unload_model();
+        encoder_loaded_ = false;
+    }
+    if (mimi_encoder_loaded_) {
+        mimi_encoder_.unload_model();
+        mimi_encoder_loaded_ = false;
+    }
+    models_loaded_ = false;
+}
+
 // --- Model introspection ---------------------------------------------------
 std::string Qwen3TTS::get_model_type() const {
     if (!transformer_loaded_) return "";
@@ -588,8 +609,13 @@ tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & par
         return synthesize_with_voice(text, params.reference_audio, params);
     }
 
-    // Default: no voice reference
-    std::vector<float> zero_emb(transformer_.get_config().hidden_size, 0.0f);
+    // Default: no voice reference — use a zero speaker embedding.
+    // Size must match the encoder output dimension, not the transformer hidden size.
+    // We read it from the transformer config's expected speaker dim (stored as hidden_size
+    // in the talker config equals 1024 for both 0.6B and 1.7B, but use the canonical
+    // speaker_encoder embedding_dim via the config to be future-proof).
+    const int32_t spk_dim = transformer_.get_config().hidden_size; // always matches embedding_dim
+    std::vector<float> zero_emb(spk_dim, 0.0f);
     return synthesize_internal(text, zero_emb.data(), params, result);
 }
 
@@ -708,8 +734,12 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                         double ratio = (double)n_ref_frames / (double)total_frames;
                         size_t cut = (size_t)(ratio * (double)result.audio.size());
                         if (cut > result.audio.size()) cut = result.audio.size();
-                        result.audio.erase(result.audio.begin(),
-                                           result.audio.begin() + (ptrdiff_t)cut);
+                        // Use move-assign from subrange instead of erase(begin,begin+n)
+                        // to avoid a large O(n) element shift in-place.
+                        std::vector<float> trimmed(
+                            std::make_move_iterator(result.audio.begin() + (ptrdiff_t)cut),
+                            std::make_move_iterator(result.audio.end()));
+                        result.audio = std::move(trimmed);
                     }
                 }
 
@@ -791,6 +821,21 @@ bool Qwen3TTS::load_speaker_embedding(const std::string & path,
 // --- set_progress_callback ------------------------------------------------
 void Qwen3TTS::set_progress_callback(tts_progress_callback_t cb) {
     progress_callback_ = cb;
+}
+
+// --- get_embedding_dim -----------------------------------------------------
+int32_t Qwen3TTS::get_embedding_dim() const {
+    // The speaker encoder is lazy-loaded, so its config may not be populated
+    // until the first voice-clone call.  However, the GGUF metadata value is
+    // read during load_model() and stored in the config struct, so if the
+    // encoder has been loaded at least once the value is accurate.
+    // If not yet loaded, fall back to the known default (1024 for all current
+    // Qwen3-TTS checkpoints) rather than returning 0 and misleading callers.
+    if (encoder_loaded_) {
+        int32_t d = audio_encoder_.get_config().embedding_dim;
+        return (d > 0) ? d : 1024;
+    }
+    return 1024;
 }
 
 // --- synthesize_internal ---------------------------------------------------
@@ -1048,38 +1093,50 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples, int
             fseek(f, 6, SEEK_CUR); // skip byte_rate + block_align
             if (fread(&bits_per_sample, 2, 1, f) != 1) break;
             if (chunk_size > 16) fseek(f, chunk_size - 16, SEEK_CUR);
+            // Pad to even boundary (RIFF spec: all chunks are word-aligned)
+            if (chunk_size & 1) fseek(f, 1, SEEK_CUR);
         } else if (strncmp(chunk_id, "data", 4) == 0) {
             sample_rate = (int)sr;
+            if (num_channels == 0) {
+                fprintf(stderr, "ERROR: WAV fmt chunk missing or corrupt: %s\n", path.c_str());
+                fclose(f); return false;
+            }
             if (audio_format == 1 && bits_per_sample == 16) {
-                int n = chunk_size / (2 * num_channels);
-                std::vector<int16_t> raw(n * num_channels);
-                samples.resize(n);
-                fread(raw.data(), 2, n * num_channels, f);
-                for (int i = 0; i < n; ++i) {
+                int n = (int)(chunk_size / (2u * num_channels));
+                std::vector<int16_t> raw((size_t)n * num_channels);
+                samples.resize((size_t)n);
+                size_t got = fread(raw.data(), 2, (size_t)n * num_channels, f);
+                int n_read = (int)(got / num_channels);
+                for (int i = 0; i < n_read; ++i) {
                     float sum = 0;
                     for (int c = 0; c < num_channels; ++c) sum += raw[i*num_channels+c] / 32768.0f;
                     samples[i] = sum / num_channels;
                 }
+                samples.resize((size_t)n_read);
             } else if (audio_format == 1 && bits_per_sample == 32) {
-                int n = chunk_size / (4 * num_channels);
-                std::vector<int32_t> raw(n * num_channels);
-                samples.resize(n);
-                fread(raw.data(), 4, n * num_channels, f);
-                for (int i = 0; i < n; ++i) {
+                int n = (int)(chunk_size / (4u * num_channels));
+                std::vector<int32_t> raw((size_t)n * num_channels);
+                samples.resize((size_t)n);
+                size_t got = fread(raw.data(), 4, (size_t)n * num_channels, f);
+                int n_read = (int)(got / num_channels);
+                for (int i = 0; i < n_read; ++i) {
                     float sum = 0;
                     for (int c = 0; c < num_channels; ++c) sum += raw[i*num_channels+c] / 2147483648.0f;
                     samples[i] = sum / num_channels;
                 }
+                samples.resize((size_t)n_read);
             } else if (audio_format == 3) {
-                int n = chunk_size / (4 * num_channels);
-                std::vector<float> raw(n * num_channels);
-                samples.resize(n);
-                fread(raw.data(), 4, n * num_channels, f);
-                for (int i = 0; i < n; ++i) {
+                int n = (int)(chunk_size / (4u * num_channels));
+                std::vector<float> raw((size_t)n * num_channels);
+                samples.resize((size_t)n);
+                size_t got = fread(raw.data(), 4, (size_t)n * num_channels, f);
+                int n_read = (int)(got / num_channels);
+                for (int i = 0; i < n_read; ++i) {
                     float sum = 0;
                     for (int c = 0; c < num_channels; ++c) sum += raw[i*num_channels+c];
                     samples[i] = sum / num_channels;
                 }
+                samples.resize((size_t)n_read);
             } else {
                 fprintf(stderr, "ERROR: Unsupported WAV format %d / %d bps\n",
                         audio_format, bits_per_sample);
@@ -1089,7 +1146,9 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples, int
             fclose(f);
             return !samples.empty();
         } else {
-            fseek(f, chunk_size, SEEK_CUR);
+            // Skip unknown chunk — pad to even boundary per RIFF spec
+            uint32_t skip = chunk_size + (chunk_size & 1u);
+            fseek(f, (long)skip, SEEK_CUR);
         }
     }
     fclose(f);

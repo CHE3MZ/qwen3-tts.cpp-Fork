@@ -119,6 +119,10 @@ public:
     //   qwen3-tts-tokenizer-*.gguf  (vocoder)
     bool load_models(const std::string & model_dir);
 
+    // Unload all models and free GPU/CPU buffers.
+    // The object remains valid — call load_models() again to reload.
+    void unload_models();
+
     // Optionally load generation defaults from a JSON file.
     // JSON keys: do_sample, temperature, top_k, top_p, repetition_penalty,
     //            subtalker_dosample, subtalker_temperature, subtalker_top_k,
@@ -195,6 +199,12 @@ public:
     void set_progress_callback(tts_progress_callback_t callback);
     const std::string & get_error() const { return error_msg_; }
     bool is_loaded() const { return models_loaded_; }
+
+    // Returns the speaker embedding dimension from the encoder config stored
+    // in the GGUF metadata. Returns 1024 if the config has not been populated
+    // yet (encoder is lazy-loaded). Callers should use this instead of
+    // hardcoding 1024 to stay correct across model variants.
+    int32_t get_embedding_dim() const;
 
 private:
     // Core internal synthesis that all public paths funnel into

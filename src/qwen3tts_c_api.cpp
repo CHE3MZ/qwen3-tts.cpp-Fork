@@ -34,6 +34,8 @@ struct Qwen3Tts {
     std::string last_error;
     std::string model_type_buf;
     std::string model_size_buf;
+    // Default thread count stored at create time; applied as param default
+    int32_t default_n_threads = 0;
     // Progress callback
     Qwen3TtsProgressFn progress_fn   = nullptr;
     void *             progress_data = nullptr;
@@ -42,16 +44,21 @@ struct Qwen3Tts {
 // ============================================================
 // Helpers
 // ============================================================
-static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p) {
+static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p,
+                                            int32_t default_n_threads = 0) {
     qwen3_tts::tts_params out;
     if (!p) return out;
     out.max_audio_tokens      = p->max_audio_tokens;
     out.temperature           = p->temperature;
     out.top_p                 = p->top_p;
     out.top_k                 = p->top_k;
-    out.n_threads             = (p->n_threads > 0)
-                                ? p->n_threads
-                                : (int32_t)std::min(8u, std::thread::hardware_concurrency());
+    // Thread resolution order: params field > handle default > hardware auto-detect
+    if (p->n_threads > 0)
+        out.n_threads = p->n_threads;
+    else if (default_n_threads > 0)
+        out.n_threads = default_n_threads;
+    else
+        out.n_threads = (int32_t)std::min(8u, std::thread::hardware_concurrency());
     out.repetition_penalty    = p->repetition_penalty;
     out.subtalker_temperature = p->subtalker_temperature;
     out.subtalker_top_k       = p->subtalker_top_k;
@@ -59,6 +66,7 @@ static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p) {
     out.icl_mode              = (p->icl_mode != 0);
     out.non_streaming_mode    = (p->non_streaming_mode != 0);
     out.print_timing          = (p->print_timing != 0);
+    out.print_progress        = (p->print_progress != 0);
     if (p->language_name[0] != '\0') out.language = p->language_name;
     else if (p->language_id > 0)     out.language = std::to_string(p->language_id);
     if (p->speaker[0]  != '\0') out.speaker  = p->speaker;
@@ -123,6 +131,7 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
     p->icl_mode              = 0;
     p->non_streaming_mode    = 0;
     p->print_timing          = 0;
+    p->print_progress        = 0;
     std::strncpy(p->language_name, "auto", sizeof(p->language_name) - 1);
 }
 
@@ -131,10 +140,9 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
 Qwen3Tts * qwen3_tts_create(const char * model_dir, int32_t n_threads) {
     if (!model_dir) return nullptr;
     auto * tts = new Qwen3Tts;
-    if (n_threads > 0) {
-        // Pass thread count via env hint (picked up by GGML backend init)
-        // Actual application happens in synthesize_internal via set_n_threads
-    }
+    // Store the requested thread count so all subsequent synthesize calls use it
+    // unless the caller overrides via params.n_threads.
+    tts->default_n_threads = (n_threads > 0) ? n_threads : 0;
     if (!tts->engine.load_models(model_dir)) {
         tts->last_error = tts->engine.get_error();
         delete tts;
@@ -159,10 +167,9 @@ int qwen3_tts_is_loaded(const Qwen3Tts * tts) {
 }
 
 void qwen3_tts_unload(Qwen3Tts * tts) {
-    // No direct unload_all() but we can force low-mem by env var.
-    // For now: no-op (models stay loaded for reuse).
-    // Users wanting full unload should call qwen3_tts_destroy() and recreate.
-    (void)tts;
+    if (!tts) return;
+    tts->engine.unload_models();
+    tts->last_error.clear();
 }
 
 void qwen3_tts_destroy(Qwen3Tts * tts) { delete tts; }
@@ -175,7 +182,11 @@ int32_t qwen3_tts_sample_rate(const Qwen3Tts * /*tts*/) { return 24000; }
 
 int32_t qwen3_tts_embedding_size(const Qwen3Tts * tts) {
     if (!tts || !tts->engine.is_loaded()) return 0;
-    return 1024;  // ECAPA-TDNN x-vector output dimension
+    // Read the actual embedding dimension from the speaker encoder config
+    // stored in the transformer GGUF metadata, rather than hardcoding 1024.
+    // Falls back to 1024 if the config hasn't been populated yet (encoder lazy-loads).
+    int32_t dim = tts->engine.get_embedding_dim();
+    return (dim > 0) ? dim : 1024;
 }
 
 // ---- progress callback ------------------------------------------------------
@@ -248,7 +259,7 @@ Qwen3TtsAudio * qwen3_tts_synthesize(
         Qwen3Tts * tts, const char * text, const Qwen3TtsParams * params) {
     if (!tts || !text) return nullptr;
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize(text, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     Qwen3TtsAudio * out = nullptr;
@@ -265,7 +276,7 @@ Qwen3TtsAudio * qwen3_tts_synthesize_with_voice_file(
         const Qwen3TtsParams * params) {
     if (!tts || !text || !ref_path) return nullptr;
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_voice(text, ref_path, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     Qwen3TtsAudio * out = nullptr;
@@ -280,7 +291,7 @@ Qwen3TtsAudio * qwen3_tts_synthesize_with_voice_samples(
         const Qwen3TtsParams * params) {
     if (!tts || !text || !ref || n_ref <= 0) return nullptr;
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_voice(text, ref, n_ref, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     Qwen3TtsAudio * out = nullptr;
@@ -295,7 +306,7 @@ Qwen3TtsAudio * qwen3_tts_synthesize_with_embedding(
         const Qwen3TtsParams * params) {
     if (!tts || !text || !emb || emb_size <= 0) return nullptr;
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_embedding(text, emb, emb_size, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     Qwen3TtsAudio * out = nullptr;
@@ -320,7 +331,7 @@ Qwen3TtsResult * qwen3_tts_synthesize_ex(
         return r;
     }
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize(text, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     auto * out = make_result(res);
@@ -335,7 +346,7 @@ Qwen3TtsResult * qwen3_tts_synthesize_with_voice_file_ex(
         auto * r = new Qwen3TtsResult{}; std::strncpy(r->error_msg,"null arg",sizeof(r->error_msg)-1); return r;
     }
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_voice(text, ref_path, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     auto * out = make_result(res);
@@ -351,7 +362,7 @@ Qwen3TtsResult * qwen3_tts_synthesize_with_voice_samples_ex(
         auto * r = new Qwen3TtsResult{}; std::strncpy(r->error_msg,"null arg",sizeof(r->error_msg)-1); return r;
     }
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_voice(text, ref, n_ref, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     auto * out = make_result(res);
@@ -367,7 +378,7 @@ Qwen3TtsResult * qwen3_tts_synthesize_with_embedding_ex(
         auto * r = new Qwen3TtsResult{}; std::strncpy(r->error_msg,"null arg",sizeof(r->error_msg)-1); return r;
     }
     ARP_BEGIN
-    auto cpp = to_cpp_params(params);
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
     auto res = tts->engine.synthesize_with_embedding(text, emb, emb_size, cpp);
     if (!res.success) tts->last_error = res.error_msg;
     auto * out = make_result(res);
