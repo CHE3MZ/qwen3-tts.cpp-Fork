@@ -576,7 +576,165 @@ bool Qwen3TTS::decode_codes(const std::vector<int32_t> & codes,
     return true;
 }
 
-// --- synthesize (main dispatch) --------------------------------------------
+// --- decode_codes_streaming ------------------------------------------------
+// Decodes in fixed-size chunks, firing audio_chunk_callback_ for each.
+// Falls back to single-shot decode when no callback is registered.
+bool Qwen3TTS::decode_codes_streaming(const std::vector<int32_t> & codes,
+                                       tts_result & result,
+                                       const tts_params & params) {
+    // No chunk callback → delegate to normal single-shot path
+    if (!audio_chunk_callback_) {
+        return decode_codes(codes, result, params);
+    }
+
+    // Ensure decoder is loaded
+    if (!decoder_loaded_) {
+        int64_t t0 = get_time_ms();
+        if (!audio_decoder_.load_model(decoder_model_path_)) {
+            result.error_msg = "Failed to load vocoder: " + audio_decoder_.get_error();
+            return false;
+        }
+        decoder_loaded_ = true;
+        if (params.print_timing)
+            fprintf(stderr, "  Vocoder loaded in %lld ms\n",
+                    (long long)(get_time_ms() - t0));
+    }
+
+    const int32_t n_cb     = transformer_.get_config().n_codebooks;
+    const int32_t n_frames = (int32_t)(codes.size() / (size_t)n_cb);
+    if (n_frames == 0) {
+        result.error_msg = "No speech codes generated";
+        return false;
+    }
+
+    const int32_t chunk = audio_chunk_frames_;  // frames per decode call
+    const int32_t sr    = audio_decoder_.get_config().sample_rate;
+
+    int64_t t_decode_total = 0;
+    bool aborted = false;
+
+    for (int32_t base = 0; base < n_frames && !aborted; base += chunk) {
+        int32_t remaining   = n_frames - base;
+        int32_t this_chunk  = (chunk < remaining) ? chunk : remaining;
+        int     is_last     = (base + this_chunk >= n_frames) ? 1 : 0;
+
+        std::vector<float> chunk_audio;
+        int64_t t0 = get_time_ms();
+        if (!audio_decoder_.decode(codes.data() + (size_t)base * n_cb,
+                                    this_chunk, chunk_audio)) {
+            result.error_msg = "Vocoder decode failed: " + audio_decoder_.get_error();
+            return false;
+        }
+        t_decode_total += get_time_ms() - t0;
+
+        // Append to result.audio so the caller gets the full waveform
+        // even when using streaming (result is still fully populated at the end)
+        result.audio.insert(result.audio.end(), chunk_audio.begin(), chunk_audio.end());
+
+        // Fire chunk callback
+        int stop = audio_chunk_callback_(chunk_audio.data(), (int32_t)chunk_audio.size(),
+                                          sr, is_last ? 1 : 0);
+        if (stop) aborted = true;
+    }
+
+    result.t_decode_ms = t_decode_total;
+
+    if (low_mem_mode_) {
+        audio_decoder_.unload_model();
+        decoder_loaded_ = false;
+    }
+
+    if (aborted && result.audio.empty()) {
+        result.error_msg = "Streaming synthesis aborted by chunk callback";
+        return false;
+    }
+    return true;
+}
+
+// --- synthesize_codes -------------------------------------------------------
+int32_t Qwen3TTS::synthesize_codes(const std::string & text,
+                                    std::vector<int32_t> & codes_out,
+                                    int32_t & n_codebooks_out,
+                                    const tts_params & params) {
+    tts_result result;
+    if (!models_loaded_) { error_msg_ = "Models not loaded"; return -1; }
+    std::vector<int32_t> codes;
+    const int32_t spk_dim = transformer_.get_config().hidden_size;
+    std::vector<float> zero_emb(spk_dim, 0.0f);
+    synthesize_internal(text, zero_emb.data(), params, result, &codes);
+    if (!result.success) { error_msg_ = result.error_msg; return -1; }
+    n_codebooks_out = transformer_.get_config().n_codebooks;
+    codes_out = std::move(codes);
+    return (int32_t)(codes_out.size() / (size_t)n_codebooks_out);
+}
+
+int32_t Qwen3TTS::synthesize_codes_with_voice(const std::string & text,
+                                               const std::string & reference_audio,
+                                               std::vector<int32_t> & codes_out,
+                                               int32_t & n_codebooks_out,
+                                               const tts_params & params) {
+    // Load + resample reference audio then extract speaker embedding
+    std::vector<float> ref_samples;
+    int ref_sr;
+    if (!load_audio_file(reference_audio, ref_samples, ref_sr)) {
+        error_msg_ = "Failed to load reference audio: " + reference_audio;
+        return -1;
+    }
+    if (ref_sr != 24000) {
+        std::vector<float> resampled;
+        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sr, resampled, 24000);
+        ref_samples = std::move(resampled);
+    }
+    if (!ensure_encoder_loaded(params)) return -1;
+    std::vector<float> emb;
+    if (!audio_encoder_.encode(ref_samples.data(), (int32_t)ref_samples.size(), emb)) {
+        error_msg_ = "Speaker encoding failed: " + audio_encoder_.get_error();
+        return -1;
+    }
+    return synthesize_codes_with_embedding(text, emb.data(), (int32_t)emb.size(),
+                                            codes_out, n_codebooks_out, params);
+}
+
+int32_t Qwen3TTS::synthesize_codes_with_embedding(const std::string & text,
+                                                    const float * embedding,
+                                                    int32_t embedding_size,
+                                                    std::vector<int32_t> & codes_out,
+                                                    int32_t & n_codebooks_out,
+                                                    const tts_params & params) {
+    tts_result result;
+    if (!models_loaded_) { error_msg_ = "Models not loaded"; return -1; }
+    if (!embedding || embedding_size <= 0) { error_msg_ = "Invalid embedding"; return -1; }
+    std::vector<int32_t> codes;
+    synthesize_internal(text, embedding, params, result, &codes);
+    if (!result.success) { error_msg_ = result.error_msg; return -1; }
+    n_codebooks_out = transformer_.get_config().n_codebooks;
+    codes_out = std::move(codes);
+    return (int32_t)(codes_out.size() / (size_t)n_codebooks_out);
+}
+
+// --- decode_speech_codes ---------------------------------------------------
+tts_result Qwen3TTS::decode_speech_codes(const int32_t * codes,
+                                          int32_t n_frames,
+                                          int32_t n_codebooks,
+                                          const tts_params & params) {
+    tts_result result;
+    if (!models_loaded_) { result.error_msg = "Models not loaded"; return result; }
+    if (!codes || n_frames <= 0 || n_codebooks <= 0) {
+        result.error_msg = "Invalid codes input";
+        return result;
+    }
+    const int32_t expected_n_cb = transformer_.get_config().n_codebooks;
+    if (n_codebooks != expected_n_cb) {
+        result.error_msg = "n_codebooks mismatch: got " + std::to_string(n_codebooks)
+                         + ", expected " + std::to_string(expected_n_cb);
+        return result;
+    }
+    const std::vector<int32_t> codes_vec(codes, codes + (size_t)n_frames * n_codebooks);
+    if (!decode_codes_streaming(codes_vec, result, params)) return result;
+    result.sample_rate = audio_decoder_.get_config().sample_rate;
+    result.success     = true;
+    return result;
+}
 tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & params) {
     tts_result result;
     if (!models_loaded_) { result.error_msg = "Models not loaded"; return result; }
@@ -734,7 +892,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                 full_codes.insert(full_codes.end(), ref_codes.begin(), ref_codes.end());
                 full_codes.insert(full_codes.end(), speech_codes.begin(), speech_codes.end());
 
-                if (!decode_codes(full_codes, result, params)) return result;
+                if (!decode_codes_streaming(full_codes, result, params)) return result;
 
                 // Trim the reference portion using float ratio to avoid overflow
                 if (n_ref_frames > 0 && !result.audio.empty()) {
@@ -832,14 +990,30 @@ void Qwen3TTS::set_progress_callback(tts_progress_callback_t cb) {
     progress_callback_ = cb;
 }
 
+// --- set_logits_callback --------------------------------------------------
+void Qwen3TTS::set_logits_callback(tts_logits_callback_t cb) {
+    logits_callback_ = cb;
+    // Wire through to transformer immediately if already loaded
+    if (transformer_loaded_) {
+        if (cb) {
+            transformer_.set_logits_callback(
+                [this](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                    return logits_callback_ ? logits_callback_(frame, lg, sz, tok) : 0;
+                });
+        } else {
+            transformer_.clear_logits_callback();
+        }
+    }
+}
+
+// --- set_audio_chunk_callback ---------------------------------------------
+void Qwen3TTS::set_audio_chunk_callback(tts_audio_chunk_callback_t cb, int32_t chunk_frames) {
+    audio_chunk_callback_ = cb;
+    audio_chunk_frames_   = (chunk_frames > 0) ? chunk_frames : 12;
+}
+
 // --- get_embedding_dim -----------------------------------------------------
 int32_t Qwen3TTS::get_embedding_dim() const {
-    // The speaker encoder is lazy-loaded, so its config may not be populated
-    // until the first voice-clone call.  However, the GGUF metadata value is
-    // read during load_model() and stored in the config struct, so if the
-    // encoder has been loaded at least once the value is accurate.
-    // If not yet loaded, fall back to the known default (1024 for all current
-    // Qwen3-TTS checkpoints) rather than returning 0 and misleading callers.
     if (encoder_loaded_) {
         int32_t d = audio_encoder_.get_config().embedding_dim;
         return (d > 0) ? d : 1024;
@@ -851,7 +1025,8 @@ int32_t Qwen3TTS::get_embedding_dim() const {
 tts_result Qwen3TTS::synthesize_internal(const std::string & text,
                                           const float * speaker_embedding,
                                           const tts_params & raw_params,
-                                          tts_result & result) {
+                                          tts_result & result,
+                                          std::vector<int32_t> * codes_out) {
     int64_t t_total = get_time_ms();
 
     // Merge generation_config defaults — only apply when user left params at
@@ -916,6 +1091,16 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     // Apply thread count (default 4 → use all available cores for speed)
     if (params.n_threads > 0) {
         transformer_.set_n_threads(params.n_threads);
+    }
+
+    // Wire logits callback into the transformer for this synthesis call
+    if (logits_callback_) {
+        transformer_.set_logits_callback(
+            [this](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                return logits_callback_ ? logits_callback_(frame, lg, sz, tok) : 0;
+            });
+    } else {
+        transformer_.clear_logits_callback();
     }
 
     std::string model_type = get_model_type();
@@ -1042,8 +1227,17 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
         transformer_loaded_ = false;
     }
 
-    // ---- Decode to waveform ---------------------------------------------
-    if (!decode_codes(speech_codes, result, params)) return result;
+    // ---- If caller only wants codes (no audio decode) -------------------
+    if (codes_out) {
+        *codes_out = speech_codes;
+        result.sample_rate = audio_decoder_.get_config().sample_rate;
+        result.success     = true;
+        result.t_total_ms  = get_time_ms() - t_total;
+        return result;
+    }
+
+    // ---- Decode to waveform (streaming or single-shot) ------------------
+    if (!decode_codes_streaming(speech_codes, result, params)) return result;
     snap_mem("synth/after-decode");
 
     result.sample_rate = audio_decoder_.get_config().sample_rate;

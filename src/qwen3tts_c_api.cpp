@@ -39,6 +39,12 @@ struct Qwen3Tts {
     // Progress callback
     Qwen3TtsProgressFn progress_fn   = nullptr;
     void *             progress_data = nullptr;
+    // Per-frame logits callback
+    Qwen3TtsLogitsFn   logits_fn     = nullptr;
+    void *             logits_data   = nullptr;
+    // Streaming audio chunk callback
+    Qwen3TtsAudioChunkFn chunk_fn    = nullptr;
+    void *               chunk_data  = nullptr;
 };
 
 // ============================================================
@@ -469,6 +475,137 @@ int32_t qwen3_tts_load_wav(const char * path,
 int qwen3_tts_load_generation_config(Qwen3Tts * tts, const char * json_path) {
     if (!tts || !json_path) return 0;
     return tts->engine.load_generation_config(json_path) ? 1 : 0;
+}
+
+// ---- logits callback --------------------------------------------------------
+
+void qwen3_tts_set_logits_callback(Qwen3Tts * tts, Qwen3TtsLogitsFn fn, void * userdata) {
+    if (!tts) return;
+    tts->logits_fn   = fn;
+    tts->logits_data = userdata;
+    if (fn) {
+        tts->engine.set_logits_callback(
+            [tts](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                return tts->logits_fn
+                    ? tts->logits_fn(frame, lg, sz, tok, tts->logits_data)
+                    : 0;
+            });
+    } else {
+        tts->engine.set_logits_callback(nullptr);
+    }
+}
+
+void qwen3_tts_clear_logits_callback(Qwen3Tts * tts) {
+    qwen3_tts_set_logits_callback(tts, nullptr, nullptr);
+}
+
+// ---- streaming audio chunk callback -----------------------------------------
+
+void qwen3_tts_set_audio_chunk_callback(Qwen3Tts * tts,
+                                         Qwen3TtsAudioChunkFn fn,
+                                         void * userdata,
+                                         int32_t chunk_frames) {
+    if (!tts) return;
+    tts->chunk_fn   = fn;
+    tts->chunk_data = userdata;
+    if (fn) {
+        tts->engine.set_audio_chunk_callback(
+            [tts](const float * s, int32_t n, int32_t sr, int last) -> int {
+                return tts->chunk_fn
+                    ? tts->chunk_fn(s, n, sr, last, tts->chunk_data)
+                    : 0;
+            }, chunk_frames);
+    } else {
+        tts->engine.set_audio_chunk_callback(nullptr);
+    }
+}
+
+void qwen3_tts_clear_audio_chunk_callback(Qwen3Tts * tts) {
+    qwen3_tts_set_audio_chunk_callback(tts, nullptr, nullptr, 0);
+}
+
+// ---- speech codes access ----------------------------------------------------
+
+// Internal helper: run synthesize_codes and optionally copy into caller buffer
+static int32_t run_synthesize_codes(Qwen3Tts * tts,
+                                     std::vector<int32_t> & codes,
+                                     int32_t & n_cb,
+                                     int32_t * codes_out, int32_t max_frames,
+                                     int32_t * n_codebooks_out) {
+    int32_t n_frames = (int32_t)(codes.size() / (size_t)n_cb);
+    if (n_codebooks_out) *n_codebooks_out = n_cb;
+    if (!codes_out) return n_frames;   // size-query mode
+    int32_t copy_frames = std::min(n_frames, max_frames);
+    std::memcpy(codes_out, codes.data(),
+                (size_t)copy_frames * (size_t)n_cb * sizeof(int32_t));
+    return copy_frames;
+}
+
+int32_t qwen3_tts_synthesize_codes(
+        Qwen3Tts * tts, const char * text, const Qwen3TtsParams * params,
+        int32_t * codes_out, int32_t max_frames, int32_t * n_codebooks_out) {
+    if (!tts || !text) return -1;
+    ARP_BEGIN
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+    std::vector<int32_t> codes;
+    int32_t n_cb = 0;
+    int32_t n_frames = tts->engine.synthesize_codes(text, codes, n_cb, cpp);
+    if (n_frames < 0) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
+    int32_t ret = run_synthesize_codes(tts, codes, n_cb, codes_out, max_frames, n_codebooks_out);
+    ARP_END
+    return ret;
+}
+
+int32_t qwen3_tts_synthesize_codes_with_voice_file(
+        Qwen3Tts * tts, const char * text, const char * ref_path,
+        const Qwen3TtsParams * params,
+        int32_t * codes_out, int32_t max_frames, int32_t * n_codebooks_out) {
+    if (!tts || !text || !ref_path) return -1;
+    ARP_BEGIN
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+    std::vector<int32_t> codes;
+    int32_t n_cb = 0;
+    int32_t n_frames = tts->engine.synthesize_codes_with_voice(text, ref_path, codes, n_cb, cpp);
+    if (n_frames < 0) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
+    int32_t ret = run_synthesize_codes(tts, codes, n_cb, codes_out, max_frames, n_codebooks_out);
+    ARP_END
+    return ret;
+}
+
+int32_t qwen3_tts_synthesize_codes_with_embedding(
+        Qwen3Tts * tts, const char * text,
+        const float * emb, int32_t emb_size,
+        const Qwen3TtsParams * params,
+        int32_t * codes_out, int32_t max_frames, int32_t * n_codebooks_out) {
+    if (!tts || !text || !emb || emb_size <= 0) return -1;
+    ARP_BEGIN
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+    std::vector<int32_t> codes;
+    int32_t n_cb = 0;
+    int32_t n_frames = tts->engine.synthesize_codes_with_embedding(
+                            text, emb, emb_size, codes, n_cb, cpp);
+    if (n_frames < 0) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
+    int32_t ret = run_synthesize_codes(tts, codes, n_cb, codes_out, max_frames, n_codebooks_out);
+    ARP_END
+    return ret;
+}
+
+Qwen3TtsResult * qwen3_tts_decode_codes(
+        Qwen3Tts * tts,
+        const int32_t * codes, int32_t n_frames, int32_t n_codebooks,
+        const Qwen3TtsParams * params) {
+    if (!tts || !codes || n_frames <= 0 || n_codebooks <= 0) {
+        auto * r = new Qwen3TtsResult{};
+        std::strncpy(r->error_msg, "null or invalid args", sizeof(r->error_msg)-1);
+        return r;
+    }
+    ARP_BEGIN
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+    auto res = tts->engine.decode_speech_codes(codes, n_frames, n_codebooks, cpp);
+    if (!res.success) tts->last_error = res.error_msg;
+    auto * out = make_result(res);
+    ARP_END
+    return out;
 }
 
 } // extern "C"

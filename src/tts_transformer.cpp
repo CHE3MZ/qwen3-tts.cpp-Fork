@@ -2976,6 +2976,14 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
+
+        // Fire per-frame logits callback — caller can inspect raw CB0 logits
+        // and the sampled token, and return non-zero to stop generation early.
+        if (logits_cb_) {
+            int stop = logits_cb_((int32_t)frame, logits.data(),
+                                  (int32_t)logits.size(), next_token);
+            if (stop) break;
+        }
         
 #ifdef QWEN3_TTS_TIMING
         t0 = clk::now();
@@ -3459,6 +3467,13 @@ bool TTSTransformer::generate_from_prefill(
         if (next_token == cfg.codec_eos_id) break;
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
+
+        // Fire per-frame logits callback
+        if (logits_cb_) {
+            int stop = logits_cb_((int32_t)frame, logits.data(),
+                                  (int32_t)logits.size(), next_token);
+            if (stop) break;
+        }
 
         // Predict CB1-15
         std::vector<int32_t> codes_1_15;

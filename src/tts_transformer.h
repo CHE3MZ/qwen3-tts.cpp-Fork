@@ -9,6 +9,7 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <functional>
 #include <random>
 #include <unordered_set>
 #ifdef QWEN3_TTS_TIMING
@@ -322,6 +323,14 @@ public:
                                 int32_t subtalker_top_k = -1,
                                 float subtalker_top_p = -1.0f);
 
+    // Set a per-frame logits callback.  Called in the generate loop after
+    // CB0 logits are ready, before sampling.  Return non-zero to stop early.
+    // Pass nullptr to clear.
+    // Callback signature: (frame_idx, cb0_logits, cb0_logits_size, cb0_token) → int
+    using logits_cb_t = std::function<int(int32_t, const float *, int32_t, int32_t)>;
+    void set_logits_callback(logits_cb_t cb) { logits_cb_ = std::move(cb); }
+    void clear_logits_callback() { logits_cb_ = nullptr; }
+
     const tts_transformer_config & get_config() const { return model_.config; }
 
     const std::string & get_error() const { return error_msg_; }
@@ -413,6 +422,9 @@ private:
     bool use_coreml_code_predictor_ = false;
     std::string coreml_code_predictor_path_;
     bool skip_ggml_code_pred_layers_ = false;
+
+    // Optional per-frame logits callback (set via set_logits_callback)
+    logits_cb_t logits_cb_;
 
 #ifdef QWEN3_TTS_TIMING
     tts_timing * timing_ = nullptr;

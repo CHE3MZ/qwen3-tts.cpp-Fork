@@ -100,8 +100,35 @@ struct tts_result {
     uint64_t mem_phys_peak_bytes  = 0;
 };
 
+// ============================================================
+// Callbacks
+// ============================================================
+
 // Progress callback: (tokens_generated, max_tokens)
 using tts_progress_callback_t = std::function<void(int, int)>;
+
+// Per-frame logits callback.
+// Called once per generated frame, after CB0 sampling, before CB1-15 prediction.
+//   frame_idx:        0-based frame index
+//   cb0_logits:       float[codec_vocab_size] — talker raw logits for codebook 0
+//   cb0_logits_size:  number of elements in cb0_logits (codec_vocab_size, typically 3072)
+//   cb0_token:        the token that was sampled for codebook 0
+// Return non-zero to stop generation early (best-effort).
+using tts_logits_callback_t = std::function<int(
+    int32_t frame_idx,
+    const float * cb0_logits, int32_t cb0_logits_size,
+    int32_t cb0_token)>;
+
+// Streaming audio chunk callback.
+// Called with decoded PCM audio each time a chunk of frames has been decoded.
+//   samples:      float32 PCM, 24 kHz mono, normalized [-1, 1]
+//   n_samples:    number of samples in this chunk
+//   sample_rate:  always 24000
+//   is_last:      1 if this is the final chunk
+// Return non-zero to abort (best-effort — remaining synthesis is cancelled).
+using tts_audio_chunk_callback_t = std::function<int(
+    const float * samples, int32_t n_samples,
+    int32_t sample_rate, int is_last)>;
 
 // ============================================================
 // Main TTS class
@@ -197,6 +224,50 @@ public:
 
     // ---- Misc ----------------------------------------------------------
     void set_progress_callback(tts_progress_callback_t callback);
+
+    // Per-frame logits callback — called once per generated codec frame.
+    // Provides CB0 logits (talker output) and the sampled CB0 token.
+    // Return non-zero from the callback to stop generation early.
+    void set_logits_callback(tts_logits_callback_t callback);
+
+    // Streaming audio chunk callback — delivers decoded PCM as it is produced
+    // without waiting for the full synthesis to complete.
+    // chunk_frames controls how many codec frames are batched before decoding.
+    // 0 = use default (12 frames = ~1 second of audio at 12 Hz).
+    void set_audio_chunk_callback(tts_audio_chunk_callback_t callback,
+                                   int32_t chunk_frames = 0);
+
+    // Synthesize and return raw speech codes without decoding to audio.
+    // codes_out: [n_frames * n_codebooks] row-major int32_t.
+    // n_codebooks_out: filled with n_codebooks (always 16).
+    // Returns number of frames, or -1 on failure.
+    int32_t synthesize_codes(const std::string & text,
+                              std::vector<int32_t> & codes_out,
+                              int32_t & n_codebooks_out,
+                              const tts_params & params = tts_params());
+
+    // Convenience: synthesize codes with voice reference.
+    int32_t synthesize_codes_with_voice(const std::string & text,
+                                         const std::string & reference_audio,
+                                         std::vector<int32_t> & codes_out,
+                                         int32_t & n_codebooks_out,
+                                         const tts_params & params = tts_params());
+
+    // Convenience: synthesize codes with pre-computed embedding.
+    int32_t synthesize_codes_with_embedding(const std::string & text,
+                                             const float * embedding,
+                                             int32_t embedding_size,
+                                             std::vector<int32_t> & codes_out,
+                                             int32_t & n_codebooks_out,
+                                             const tts_params & params = tts_params());
+
+    // Decode previously obtained speech codes to audio (e.g. from synthesize_codes).
+    // codes: [n_frames * n_codebooks] row-major int32_t.
+    tts_result decode_speech_codes(const int32_t * codes,
+                                    int32_t n_frames,
+                                    int32_t n_codebooks,
+                                    const tts_params & params = tts_params());
+
     const std::string & get_error() const { return error_msg_; }
     bool is_loaded() const { return models_loaded_; }
 
@@ -207,11 +278,20 @@ public:
     int32_t get_embedding_dim() const;
 
 private:
-    // Core internal synthesis that all public paths funnel into
+    // Core internal synthesis that all public paths funnel into.
+    // If codes_only=true, stops after generation (no vocoder) and populates result.audio
+    // with an empty vector; the raw speech_codes are returned via codes_out.
     tts_result synthesize_internal(const std::string & text,
                                    const float * speaker_embedding,
                                    const tts_params & params,
-                                   tts_result & result);
+                                   tts_result & result,
+                                   std::vector<int32_t> * codes_out = nullptr);
+
+    // Decode codes in streaming chunks, calling audio_chunk_callback_ for each.
+    // Falls through to a single-shot decode when no chunk callback is registered.
+    bool decode_codes_streaming(const std::vector<int32_t> & codes,
+                                 tts_result & result,
+                                 const tts_params & params);
 
     // Encoder lazy-load helper
     bool ensure_encoder_loaded(const tts_params & params, tts_result * result = nullptr);
@@ -255,7 +335,10 @@ private:
         bool    loaded             = false;
     } gen_defaults_;
 
-    tts_progress_callback_t progress_callback_;
+    tts_progress_callback_t    progress_callback_;
+    tts_logits_callback_t      logits_callback_;
+    tts_audio_chunk_callback_t audio_chunk_callback_;
+    int32_t                    audio_chunk_frames_ = 12;  // ~1 s at 12 Hz
 };
 
 // ============================================================

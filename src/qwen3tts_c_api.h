@@ -309,6 +309,95 @@ int32_t qwen3_tts_load_wav(const char * path,
 int qwen3_tts_load_generation_config(Qwen3Tts * tts,
                                       const char * json_path);
 
+/* -------------------------------------------------------------------
+ * Per-frame logits callback
+ * Called once per generated codec frame, after CB0 is sampled.
+ *   frame_idx:      0-based frame index
+ *   cb0_logits:     float[cb0_logits_size] — raw talker logits for codebook 0
+ *   cb0_logits_size: typically 3072
+ *   cb0_token:      the token sampled for codebook 0
+ *   userdata:       pointer passed to qwen3_tts_set_logits_callback
+ * Return non-zero to stop generation early (best-effort).
+ * ------------------------------------------------------------------- */
+typedef int (*Qwen3TtsLogitsFn)(int32_t frame_idx,
+                                 const float * cb0_logits,
+                                 int32_t cb0_logits_size,
+                                 int32_t cb0_token,
+                                 void *  userdata);
+
+void qwen3_tts_set_logits_callback(Qwen3Tts * tts,
+                                    Qwen3TtsLogitsFn fn,
+                                    void * userdata);
+
+void qwen3_tts_clear_logits_callback(Qwen3Tts * tts);
+
+/* -------------------------------------------------------------------
+ * Streaming audio chunk callback
+ * Called with each decoded PCM chunk as it is produced.
+ *   samples:     float32 PCM, 24 kHz mono, [-1, 1]
+ *   n_samples:   number of samples in this chunk
+ *   sample_rate: always 24000
+ *   is_last:     1 if this is the final chunk for this synthesis call
+ *   userdata:    pointer passed to qwen3_tts_set_audio_chunk_callback
+ * Return non-zero to abort remaining synthesis (best-effort).
+ * ------------------------------------------------------------------- */
+typedef int (*Qwen3TtsAudioChunkFn)(const float * samples,
+                                     int32_t       n_samples,
+                                     int32_t       sample_rate,
+                                     int           is_last,
+                                     void *        userdata);
+
+/* chunk_frames: how many codec frames to decode per chunk (0 = default = 12).
+ * 12 frames = ~1 second of audio at 12 Hz.                           */
+void qwen3_tts_set_audio_chunk_callback(Qwen3Tts * tts,
+                                         Qwen3TtsAudioChunkFn fn,
+                                         void * userdata,
+                                         int32_t chunk_frames);
+
+void qwen3_tts_clear_audio_chunk_callback(Qwen3Tts * tts);
+
+/* -------------------------------------------------------------------
+ * Speech codes access — generate codes without decoding to audio
+ * Useful for: caching voices, vocoder swapping, offline processing.
+ *
+ * codes_out:        caller-allocated int32_t[max_frames * n_codebooks]
+ * max_frames:       capacity of codes_out in frames
+ * n_codebooks_out:  filled with n_codebooks (always 16)
+ *
+ * Returns number of frames generated, or -1 on failure.
+ * To query required buffer size, pass codes_out=NULL (returns frame count).
+ * ------------------------------------------------------------------- */
+int32_t qwen3_tts_synthesize_codes(
+    Qwen3Tts * tts,
+    const char * text,
+    const Qwen3TtsParams * params,
+    int32_t * codes_out, int32_t max_frames,
+    int32_t * n_codebooks_out);
+
+int32_t qwen3_tts_synthesize_codes_with_voice_file(
+    Qwen3Tts * tts,
+    const char * text,
+    const char * reference_audio_path,
+    const Qwen3TtsParams * params,
+    int32_t * codes_out, int32_t max_frames,
+    int32_t * n_codebooks_out);
+
+int32_t qwen3_tts_synthesize_codes_with_embedding(
+    Qwen3Tts * tts,
+    const char * text,
+    const float * embedding, int32_t embedding_size,
+    const Qwen3TtsParams * params,
+    int32_t * codes_out, int32_t max_frames,
+    int32_t * n_codebooks_out);
+
+/* Decode previously obtained speech codes to audio.
+ * codes:        int32_t[n_frames * n_codebooks] row-major
+ * Returns a Qwen3TtsResult* — caller frees with qwen3_tts_free_result(). */
+Qwen3TtsResult * qwen3_tts_decode_codes(
+    Qwen3Tts * tts,
+    const int32_t * codes, int32_t n_frames, int32_t n_codebooks,
+    const Qwen3TtsParams * params);
+
 #ifdef __cplusplus
 }
 #endif
