@@ -293,6 +293,28 @@ target_link_libraries(test_mimi_encoder PRIVATE
     Threads::Threads
 )
 
+# Test executable for batch inference validation
+add_executable(test_batch
+    tests/test_batch.cpp
+)
+target_link_libraries(test_batch PRIVATE
+    tts_transformer
+    text_tokenizer
+    gguf_loader
+    Threads::Threads
+)
+
+# Batch throughput benchmark
+add_executable(bench_batch
+    tests/bench_batch.cpp
+)
+target_link_libraries(bench_batch PRIVATE
+    tts_transformer
+    text_tokenizer
+    gguf_loader
+    Threads::Threads
+)
+
 # On Windows, copy GGML DLLs to the output directory so executables can find them at runtime.
 # GGML is built separately (ggml/build) and its DLLs are not automatically staged by CMake.
 # Copies core DLLs + any GPU backend DLLs that were built (CUDA, Vulkan).

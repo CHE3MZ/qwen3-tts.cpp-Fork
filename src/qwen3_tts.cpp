@@ -735,6 +735,144 @@ tts_result Qwen3TTS::decode_speech_codes(const int32_t * codes,
     result.success     = true;
     return result;
 }
+std::vector<tts_result> Qwen3TTS::synthesize_batch(
+    const std::vector<std::string> & texts,
+    const float * speaker_embedding,
+    const tts_params & raw_params,
+    const std::vector<std::string> * instruct_per_entry) {
+
+    std::vector<tts_result> results;
+    if (!models_loaded_) {
+        tts_result r; r.error_msg = "Models not loaded"; results.push_back(r);
+        return results;
+    }
+    if (texts.empty()) return results;
+
+    // Merge generation_config defaults
+    tts_params params = raw_params;
+    if (gen_defaults_.loaded) {
+        if (params.temperature        == tts_params{}.temperature)
+            params.temperature        = gen_defaults_.temperature;
+        if (params.top_k              == tts_params{}.top_k)
+            params.top_k              = gen_defaults_.top_k;
+        if (params.top_p              == tts_params{}.top_p)
+            params.top_p              = gen_defaults_.top_p;
+        if (params.repetition_penalty == tts_params{}.repetition_penalty)
+            params.repetition_penalty = gen_defaults_.repetition_penalty;
+        if (params.max_audio_tokens   == tts_params{}.max_audio_tokens
+                && gen_defaults_.max_new_tokens != tts_params{}.max_audio_tokens)
+            params.max_audio_tokens   = gen_defaults_.max_new_tokens;
+        if (!gen_defaults_.do_sample && params.temperature == gen_defaults_.temperature)
+            params.temperature = 0.0f;
+    }
+
+    if (params.n_threads > 0) transformer_.set_n_threads(params.n_threads);
+
+    // Wire extended sampling params
+    transformer_.set_extended_sampling(
+        params.min_p, params.frequency_penalty, params.presence_penalty,
+        params.dry_multiplier, params.dry_base, params.dry_allowed_length,
+        params.dry_penalty_last_n, params.dyntemp_range, params.dyntemp_exponent);
+
+    // Wire logits + progress callbacks (chained)
+    if (progress_callback_) {
+        tts_logits_callback_t prog_cb =
+            [this, &params](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                int stop = progress_callback_(frame + 1, params.max_audio_tokens);
+                if (stop) return stop;
+                if (logits_callback_) return logits_callback_(frame, lg, sz, tok);
+                return 0;
+            };
+        transformer_.set_logits_callback(std::move(prog_cb));
+    } else if (logits_callback_) {
+        transformer_.set_logits_callback(
+            [this](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                return logits_callback_ ? logits_callback_(frame, lg, sz, tok) : 0;
+            });
+    } else {
+        transformer_.clear_logits_callback();
+    }
+
+    const int32_t N = (int32_t)texts.size();
+
+    // Tokenize all texts
+    std::vector<std::vector<int32_t>> all_tokens(N);
+    for (int32_t i = 0; i < N; ++i) {
+        all_tokens[i] = tokenizer_.encode_for_tts(texts[i]);
+        if (all_tokens[i].empty()) {
+            tts_result r; r.error_msg = "Failed to tokenize: " + texts[i];
+            results.push_back(r);
+            return results;
+        }
+    }
+
+    // Tokenize instruct texts (per-entry, optional)
+    std::vector<std::vector<int32_t>> all_instruct(N);
+    bool has_instruct = (instruct_per_entry != nullptr);
+    if (has_instruct && instruct_per_entry->size() != (size_t)N) {
+        tts_result r; r.error_msg = "instruct_per_entry size mismatch";
+        results.push_back(r);
+        return results;
+    }
+    for (int32_t i = 0; i < N && has_instruct; ++i) {
+        if (!(*instruct_per_entry)[i].empty()) {
+            all_instruct[i] = tokenizer_.encode_instruct((*instruct_per_entry)[i]);
+        }
+    }
+
+    // Build per-batch arrays for transformer::generate_batch
+    std::vector<const int32_t *> token_ptrs(N);
+    std::vector<int32_t> token_counts(N);
+    std::vector<const float *> spk_ptrs(N, speaker_embedding);
+    std::vector<int32_t> lang_ids(N, 2050);
+    std::vector<const int32_t *> instruct_ptrs(N, nullptr);
+    std::vector<int32_t> instruct_counts(N, 0);
+    int32_t default_lang = resolve_language_id(params.language.empty() ? "auto" : params.language);
+
+    for (int32_t i = 0; i < N; ++i) {
+        token_ptrs[i] = all_tokens[i].data();
+        token_counts[i] = (int32_t)all_tokens[i].size();
+        lang_ids[i] = default_lang;
+        if (has_instruct && !all_instruct[i].empty()) {
+            instruct_ptrs[i] = all_instruct[i].data();
+            instruct_counts[i] = (int32_t)all_instruct[i].size();
+        }
+    }
+
+    // Run batch generation
+    std::vector<std::vector<int32_t>> batch_codes(N);
+    if (!transformer_.generate_batch(
+            token_ptrs.data(), token_counts.data(),
+            spk_ptrs.data(), N,
+            params.max_audio_tokens, batch_codes,
+            lang_ids.data(),
+            has_instruct ? instruct_ptrs.data() : nullptr,
+            has_instruct ? instruct_counts.data() : nullptr,
+            params.repetition_penalty,
+            params.temperature, params.top_k, params.top_p,
+            params.subtalker_temperature, params.subtalker_top_k,
+            params.subtalker_top_p)) {
+        tts_result r; r.error_msg = "Batch generation failed: " + transformer_.get_error();
+        results.push_back(r);
+        return results;
+    }
+
+    // Decode each result
+    results.resize(N);
+    for (int32_t i = 0; i < N; ++i) {
+        if (batch_codes[i].empty()) {
+            results[i].error_msg = "No speech codes generated for entry " + std::to_string(i);
+            results[i].success = false;
+            continue;
+        }
+        decode_codes_streaming(batch_codes[i], results[i], params);
+        results[i].sample_rate = audio_decoder_.get_config().sample_rate;
+        results[i].success = true;
+    }
+
+    return results;
+}
+
 tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & params) {
     tts_result result;
     if (!models_loaded_) { result.error_msg = "Models not loaded"; return result; }

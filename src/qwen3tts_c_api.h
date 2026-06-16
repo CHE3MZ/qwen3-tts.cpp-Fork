@@ -236,6 +236,18 @@ int32_t qwen3_tts_resolve_speaker(const Qwen3Tts * tts,
                                    const char * speaker_name);
 
 /* -------------------------------------------------------------------
+ * Batch synthesis — process N texts simultaneously.
+ * Returns array of N Qwen3TtsResult pointers (caller frees each with
+ * qwen3_tts_free_result). If any entry fails, its result will have
+ * success=0 and error_msg populated. Returns NULL on internal error.
+ * ------------------------------------------------------------------- */
+Qwen3TtsResult ** qwen3_tts_synthesize_batch(
+    Qwen3Tts * tts,
+    const char ** texts, int32_t n_texts,
+    const float * embedding, int32_t embedding_size,
+    const Qwen3TtsParams * params);
+
+/* -------------------------------------------------------------------
  * Synthesis — simple API (caller frees audio with qwen3_tts_free_audio)
  * ------------------------------------------------------------------- */
 

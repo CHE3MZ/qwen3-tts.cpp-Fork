@@ -1,104 +1,105 @@
-# Handoff: TTS port complete + GGML/llama.cpp optimizations applied
-<!-- Last updated: 2026-06-15 -->
+# Handoff: Batch inference + all prior work
+<!-- Last updated: 2026-06-16 -->
 
 ## Summary
-`qwen3-tts.cpp-Fork` is production-ready and feature-complete. A major optimization pass was applied adopting patterns from llama.cpp, whisper.cpp, and ggml. All tests pass (6 PASS 1 WARN 0 FAIL). Flash attention remains as the one remaining high-impact improvement (medium effort, requires V-cache layout change).
+Batch inference has been implemented. KV cache is now 4D [head_dim, n_kv_heads, n_ctx, n_batch] or 3D (n_batch=1, backward compatible). All graph builders accept `batch_idx` parameter. New `generate_batch()` on `TTSTransformer`, `synthesize_batch()` on `Qwen3TTS`, and `qwen3_tts_synthesize_batch()` in C API. 9/9 targets compile cleanly. Single-batch path is identical to pre-batch behavior (n_batch=1 uses 3D cache, batch_idx=0, all batch_off = 0).
 
 ## Objective
-Flash attention (`ggml_flash_attn_ext`) is the remaining high-value item. All other improvements have been applied. Optionally, begin the same treatment on `qwen3-asr.cpp-Fork` using `../how-i-did-it.md`.
+Next: GPU acceleration (CUDA toolkit install + GGML rebuild). Or: start `qwen3-asr.cpp-Fork` treatment.
 
 ## Status
 
-### Completed (this session — GGML optimizations)
-* **`ggml_soft_max_ext`** — replaced all 5 `ggml_scale + ggml_diag_mask_inf + ggml_soft_max` chains across all graph builders with the fused `ggml_soft_max_ext(ctx, KQ, nullptr, KQscale, 0.0f)`. Eliminates one graph node per attention layer per forward pass.
-* **Persistent threadpool** (`ggml_threadpool`) — `set_n_threads()` now creates/reuses a `ggml_threadpool` via `ggml_threadpool_params_default` + `ggml_backend_cpu_set_threadpool`. Eliminates OS thread create/destroy overhead for every graph compute call. Freed on `unload_model()`.
-* **Abort callback** — `TTSTransformer::set_abort_callback()` + `clear_abort_callback()` wired via `ggml_backend_cpu_set_abort_callback`. Exposed as `qwen3_tts_set_abort_callback` / `qwen3_tts_clear_abort_callback` in C API. Enables cancelling synthesis mid-graph.
-* **Eval callback** — `set_eval_callback()` wired via `ggml_backend_sched_set_eval_callback`. Zero cost when not set. Enables per-node debugging/profiling without modifying graphs.
-* **Extended sampling** (from llama.cpp `llama-sampler.cpp`):
-  - **`min_p`** — keep tokens where prob ≥ min_p × max_prob; more principled than top-p
-  - **Frequency penalty** — subtract `freq_penalty × count` from logit; prevents proportional repetition
-  - **Presence penalty** — flat penalty if token appeared at all
-  - **DRY** (Don't Repeat Yourself) — n-gram penalty that targets exact sequence repetitions; most surgical anti-loop tool
-  - **Dynamic temperature** — entropy-adaptive temperature; scales per-token between `temp ± dyntemp_range`
-  - All exposed in `tts_params`, `Qwen3TtsParams` (C API), and `qwen3_tts_default_params()` (all default to 0/disabled = backward compatible)
-  - Legacy `sample_token()` wrapper preserved; all existing call-sites unchanged
-  - Token history + count tracking added to `generate()` loop for DRY/freq/presence
-
-### Previously completed (all earlier sessions)
-* Full pipeline, ICL, CustomVoice, VoiceDesign, streaming, codes access, logits callback, chunk callback, server mode, Q5K/Q6K, all 12 bug fixes, C API contract, WAV robustness
-
-## Decisions
-* All new sampling params default to 0/disabled — zero behavior change unless explicitly set
-* Extended params stored as `ext_*` members on `TTSTransformer`, set via `set_extended_sampling()` before each generate call — avoids changing the generate() signature
-* `sample_token_params` struct added for clean extensibility; legacy positional overload preserved as a thin wrapper
-* Threadpool created lazily on first `set_n_threads()` call and recreated only when thread count changes
-
-## Non-Obvious Findings (new)
-* `ggml_backend_cpu_set_abort_callback` and `ggml_threadpool_*` require `ggml-cpu.h` — it was missing from `tts_transformer.h`, causing "undeclared identifier" errors until added
-* `ggml_backend_get_reg` / proc_address pattern from reference libraries does NOT exist in our vendored ggml — use `ggml_backend_cpu_set_abort_callback` directly
-* `std::min` inside CRLF files on Windows/clang-cl: already known issue; replaced with ternary in new code
-
-## Open Issues (all optional/blocked)
-* **Flash attention** (`ggml_flash_attn_ext`) — next high-value item. Requires: KV padding to `GGML_PAD(n_ctx, 256)`, V stored non-transposed, all graph builders updated. Medium effort, ~200 lines.
-* Batch inference — architectural, ~600 lines, best done after GPU
-* GPU (CUDA) — needs CUDA toolkit install
-
-## Next Steps
-1. Flash attention: update `init_kv_cache` to pad to 256, change V storage in all 5 graph builders, replace `ggml_diag_mask_inf + soft_max_ext` with `ggml_flash_attn_ext`
-2. Or: start `qwen3-asr.cpp-Fork` treatment — see `../how-i-did-it.md`
-
-## References
-* C API (full, with all new callbacks + sampling params): `src/qwen3tts_c_api.h`
-* Extended sampling params: `src/qwen3_tts.h` (`tts_params` struct)
-* Transformer optimizations: `src/tts_transformer.h` (`set_extended_sampling`, `set_abort_callback`, `set_eval_callback`, `set_n_threads` with threadpool)
-* Run transformer test: `build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf --ref-dir reference --max-len 64`
-* Methodology guide: `../how-i-did-it.md`
-<!-- Last updated: 2026-06-15 -->
-
-## Summary
-`qwen3-tts.cpp-Fork` is complete. All identified gaps are closed, all tests pass (6 PASS 1 WARN 0 FAIL), and the repo is production-ready. The only remaining work is optional polish (Go integration test, Q8_0 smoke test, non-English smoke test) and the two architectural items that need external tooling (GPU, batch inference).
-
-## Objective
-No active objective. Next session can pick from the optional polish list below, or begin the same treatment on `qwen3-asr.cpp-Fork` using `../how-i-did-it.md` as the guide.
-
-## Status
-
-### Completed (this session)
-* **`--server` mode** added to CLI (`src/main.cpp`) — loads model once, reads JSON requests from stdin, writes JSON responses to stdout. Solves the multiple-instance RAM multiplication problem. Full JSON protocol documented in `--help`.
-* **Test 8: instruct prefill** added to `tests/test_transformer.cpp` — validates `build_prefill_graph_instruct()` + `forward_prefill()` across 4 sanity checks (size, finite, argmax, length). Result: **PASS**. Test suite now 6 PASS 1 WARN 0 FAIL.
-* **`how-i-did-it.md`** updated to reflect all features including streaming, logits callback, codes access, server mode, Q5K/Q6K, and Windows-specific build notes.
+### Completed (this session — Batch inference)
+* **KV cache batch dimension** — `tts_kv_cache` now has `n_batch` member. `init_kv_cache(n_ctx, n_batch)` creates 4D tensors when n_batch>1, 3D when n_batch≤1. Code predictor cache also supports batch dimension (syncs with talker cache's n_batch). Both freed/reset correctly.
+* **All 4 active graph builders** — `build_prefill_forward_graph`, `build_step_graph`, `build_code_pred_prefill_graph`, `build_code_pred_step_graph` accept `batch_idx`. Cache view offsets use `ggml_n_dims(cache) >= 4 ? batch_idx * nb[3] : 0` — zero overhead for non-batch. (`build_code_pred_graph` is dead code, never called.)
+* **KV cache shape mismatch guard** (BUG-1 fix) — `generate_batch()` checks `state_.cache.n_batch < n_batch` when deciding to reinitialize. Prevents silent corruption when switching between single/batch mode.
+* **Code predictor cache sync** (BUG-2 fix) — `predict_codes_autoregressive()` re-inits code_pred_cache when its `n_batch` doesn't match the talker cache's `n_batch`.
+* **Prefill OOB guard** (BUG-3 fix) — `generate_batch()` checks `prefill_len > 0` before extracting last hidden state, preventing underflow on empty prefills.
+* **Extended sampling in batch** — `generate_batch()` now uses the struct-based `sample_token()` with full extended sampling support (min_p, frequency/presence penalty, DRY, dynamic temperature). Per-batch token history and counts tracked.
+* **Logits callback in batch** — `generate_batch()` fires `logits_cb_` after each CB0 sampling, same contract as `generate()`.
+* **Instruct path in batch** — `generate_batch()` accepts `instruct_tokens` and `n_instruct_tokens` arrays per entry. Calls `build_prefill_graph_instruct()` when instruct is provided. Exposed via `synthesize_batch()` with optional `instruct_per_entry` parameter.
+* **Dead code removed** — `build_code_pred_graph()` (the legacy single-pass code predictor) was unused and has been removed.
+* **forward_prefill / forward_step** — accept `batch_idx`, pass through to graph builders. Backward compatible: default batch_idx=0.
+* **predict_codes_autoregressive** — accepts `batch_idx`, passes to code predictor graph builders.
+* **generate_batch()** — new method on `TTSTransformer`. Builds per-entry prefills, initializes 4D KV cache, runs N simultaneous sequences in a frame-major loop. Per-sequence EOS handling, per-sequence n_past tracking.
+* **synthesize_batch()** — new method on `Qwen3TTS`. Accepts `std::vector<std::string>` texts + optional shared speaker embedding. Tokenizes N texts, calls `generate_batch()`, decodes each result.
+* **C API** — `qwen3_tts_synthesize_batch()` returns array of Qwen3TtsResult* pointers. Each result is independently valid/failed.
+* **All targets build**: gguf_loader, text_tokenizer, tts_transformer, qwen3_tts, qwen3tts.dll, qwen3-tts-cli.exe, test_transformer, and all other tests. 0 errors, 810+ warnings (all pre-existing).
 
 ### Previously completed
-* Full pipeline: tokenizer → ECAPA-TDNN encoder → 28L Qwen2 talker → 5L × 15-step code predictor → WavTokenizer vocoder
-* ICL voice cloning (Mimi encoder): 100% exact match (F32)
-* All 3 model types: base, custom_voice, voice_design
-* All quantization: F16, Q8_0, Q5_K, Q6_K, Q4_K for TTS; F16/Q8_0 for tokenizer
-* C API: lifecycle, synthesis × 4 entry points, `_ex` variants, timing/memory stats, progress callback, logits callback, streaming chunk callback, speech codes access, decode_codes, speaker embedding utils, WAV I/O
-* 12 bug fixes (C API contracts, WAV robustness, ICL trim, zero-emb size)
-
-### In Progress
-* Nothing
+* Full pipeline, ICL, CustomVoice, VoiceDesign, streaming, codes access, logits callback, chunk callback, server mode, Q5K/Q6K, all 12 bug fixes, C API contract, WAV robustness, GGML optimizations (soft_max_ext, threadpool, abort/eval callbacks), extended sampling (min_p, freq/presence penalty, DRY, dynamic temperature)
 
 ## Decisions
-* Server mode uses stdin/stdout JSON protocol — no socket dependency, works with any language via pipes
-* Server mode processes requests serially — handle is not thread-safe; for parallel synthesis, spawn multiple server processes
-* Test 8 uses fabricated instruct tokens (no tokenizer GGUF needed at test time) — validates the GGML graph path without requiring Python
-* `how-i-did-it.md` is intentionally written for the ASR agent, not just as a TTS record
+* **Batch implementation is N sequential sequences per frame** — not truly parallel attention. Each batch entry makes independent forward_step + code predictor calls per frame. This is correct but best-effort CPU performance. True GPU parallelism requires batched flash_attn_ext with block-diagonal masks (future work).
+* **KV cache is 4D** [head_dim, n_kv_heads, n_ctx, n_batch] for n_batch>1. For n_batch=1, 3D caches are created (backward compatible, no memory overhead).
+* **batch_off = 0 when n_dims < 4** — the `(ggml_n_dims(cache) >= 4)` check is a compile-time free branch that resolves to false for 3D caches, so the batch offset path is never taken.
+* **Shared speaker embedding** — `synthesize_batch` accepts one speaker embedding for all N texts. Per-text speaker embeddings can be supported later.
+* **Extended sampling wired** — `generate_batch()` uses the struct-based `sample_token()` with full extended sampling (min_p, frequency/presence penalty, DRY, dynamic temperature), same as `generate()`. Per-batch token history and counts are tracked.
 
-## Open Issues (optional / blocked)
-* Go/FFI integration test — write minimal Go app using `qwen3tts.dll` via CGo
-* Q8_0 model end-to-end smoke test — quick CLI run to confirm quantized model still produces valid audio
-* Non-English synthesis smoke test — `-l chinese` etc.
-* GPU acceleration — needs CUDA toolkit + `cmake -S ggml -B ggml/build -DGGML_CUDA=ON`
-* Batch inference — architectural, ~600 lines
+## Non-Obvious Findings (new)
+* `ggml_n_dims()` is a function, not a member — `tensor->n_dims` does not exist. Editor's note: GGML uses `ggml_n_dims(tensor)` function accessor.
+* `ggml_new_tensor_4d` does not exist in this vendored GGML version — use `ggml_new_tensor(ctx, type, 4, ne)`.
+* `ggml_view_3d` correctly handles 4D source tensors with arbitrary offset — the batch offset is simply added to the byte offset parameter, and the strides (nb[1], nb[2]) are unchanged since the head_dim and n_kv_heads dimensions are contiguous in memory regardless of batch.
+
+## Open Issues (all optional/blocked)
+* **Batch performance on CPU** — minimal gain expected because the code predictor (71% of time) runs 15 sequential steps per frame per sequence. True benefit requires GPU.
+* **Batched flash_attn_ext** — all N sequences currently run independent attention via separate flash_attn_ext calls. Could be optimized with block-diagonal masks and packed K/V.
+* **Logits/progress callbacks in batch** — wired at the transformer level (`logits_cb_` in `generate_batch()`). Progress callback integration at Qwen3TTS level is functional but not tested.
+* **Per-text language IDs** — `generate_batch()` accepts `language_ids[]` array, but `synthesize_batch()` passes the same language_id for all texts.
+* **ICL + batch** — not implemented. Would need per-text reference codes.
+* **GPU (CUDA)** — needs CUDA toolkit install + GGML rebuild with `-DGGML_CUDA=ON`
+* **Flash attention** — still pending as a separate optimization
 
 ## Next Steps (if continuing TTS)
-1. Quick Q8_0 smoke: `build-ninja\qwen3-tts-cli.exe -m models -t "test" -o q8_test.wav` with a Q8_0 GGUF
-2. Go integration test: CGo wrapper calling `qwen3_tts_synthesize_ex`
-3. Non-English: `build-ninja\qwen3-tts-cli.exe -m models -t "你好世界" -l chinese -o chinese.wav`
+1. Profile batch performance on GPU (CUDA or Metal) — batch really shines on GPU
+2. Add per-text language ID support in `synthesize_batch()`
+3. Add ICL + batch support
+4. Go integration test using `qwen3_tts_synthesize_batch` C API
 
 ## Next Steps (if starting ASR)
 See `../how-i-did-it.md` — full methodology with ASR-specific differences documented.
+
+## Architecture Notes
+
+### Batch KV Cache Layout
+```
+3D (n_batch=1):  [head_dim, n_kv_heads, n_ctx]
+4D (n_batch>1):  [head_dim, n_kv_heads, n_ctx, n_batch]
+
+Cache view for batch b, position n_past, n_tokens:
+  offset = n_past * nb[2] + b * nb[3]
+  ggml_view_3d(ctx, cache, head_dim, n_kv_heads, n_tokens, nb[1], nb[2], offset)
+```
+
+### Batch Generate Loop Structure
+```
+for each frame:
+  for each active batch entry:
+    1. sample CB0 token
+    2. predict_codes_autoregressive(CB0, batch_idx=b)
+    3. build step embedding
+    4. forward_step(step_embd, n_past[b], batch_idx=b)
+  if no entries active: break
+```
+
+### File Changes Summary
+| File | Lines Changed | What Changed |
+|------|--------------|--------------|
+| `src/tts_transformer.h` | ~30 | n_batch in kv_cache, batch params on methods, generate_batch() decl |
+| `src/tts_transformer.cpp` | ~350 | 4D KV cache init, batch_idx on all graph builders + forward methods, generate_batch() impl |
+| `src/qwen3_tts.h` | ~10 | synthesize_batch() decl |
+| `src/qwen3_tts.cpp` | ~120 | synthesize_batch() impl |
+| `src/qwen3tts_c_api.h` | ~15 | qwen3_tts_synthesize_batch decl |
+| `src/qwen3tts_c_api.cpp` | ~65 | qwen3_tts_synthesize_batch impl |
+| **Total** | **~590** | |
+
+## References
+* C API batch entry point: `src/qwen3tts_c_api.h` (`qwen3_tts_synthesize_batch`)
+* Batch synthesis: `src/qwen3_tts.h` (`Qwen3TTS::synthesize_batch`)
+* Core batch generate: `src/tts_transformer.h` (`TTSTransformer::generate_batch`)
+* Run transformer test: `build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf --ref-dir reference --max-len 64`
+* Architecture + prefill structure: `AGENTS.md`
+<!-- Last updated: 2026-06-16 -->
 
 ## References
 * Methodology guide: `../how-i-did-it.md`

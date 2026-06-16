@@ -190,6 +190,7 @@ struct tts_kv_cache {
     int32_t head_dim = 128;
     int32_t n_kv_heads = 8;
     int32_t n_layers = 28;
+    int32_t n_batch = 1;
 };
 
 // TTS Transformer state
@@ -231,7 +232,7 @@ public:
     void unload_model();
     
     // Initialize KV cache
-    bool init_kv_cache(int32_t n_ctx);
+    bool init_kv_cache(int32_t n_ctx, int32_t n_batch = 1);
     
     // Clear KV cache
     void clear_kv_cache();
@@ -241,7 +242,7 @@ public:
     void set_n_threads(int32_t n_threads);
     
     // Initialize code predictor KV cache (5 layers, max 16 context)
-    bool init_code_pred_kv_cache(int32_t n_ctx);
+    bool init_code_pred_kv_cache(int32_t n_ctx, int32_t n_batch = 1);
     
     // Clear code predictor KV cache
     void clear_code_pred_kv_cache();
@@ -257,7 +258,8 @@ public:
 
     bool forward_prefill(const float * prefill_embd, int32_t n_tokens,
                          int32_t n_past, std::vector<float> & output,
-                         std::vector<float> * logits_out = nullptr);
+                         std::vector<float> * logits_out = nullptr,
+                         int32_t batch_idx = 0);
     
     // Forward pass for codec tokens (generation phase)
     // codec_token: single codec token for first codebook
@@ -268,17 +270,20 @@ public:
 
     bool forward_step(const float * step_embd, int32_t n_past,
                       std::vector<float> & output,
-                      std::vector<float> * hidden_out = nullptr);
+                      std::vector<float> * hidden_out = nullptr,
+                      int32_t batch_idx = 0);
     
     // Run code predictor autoregressively to generate 15 codes (codebooks 1-15)
     // hidden: hidden states from talker [hidden_size]
     // codebook_0_token: the codebook 0 token (used to create 2-token prefill input)
     // output: generated codes for codebooks 1-15 [15]
+    // batch_idx: which batch slot to use for KV cache (default 0)
     bool predict_codes_autoregressive(const float * hidden, int32_t codebook_0_token, 
                                        std::vector<int32_t> & output,
                                        float temperature = 0.9f,
                                        int32_t top_k = 50,
-                                       float top_p = 1.0f);
+                                       float top_p = 1.0f,
+                                       int32_t batch_idx = 0);
     
     // Generate speech codes autoregressively
     // text_tokens: input text token IDs [n_tokens]
@@ -314,6 +319,27 @@ public:
                       int32_t subtalker_top_k = -1,
                       bool non_streaming_mode = false,
                       float subtalker_top_p = -1.0f);
+
+    // Batch generation: process N independent texts simultaneously.
+    // Each output vector receives codes for one utterance.
+    // When instruct_tokens is provided per entry, build_prefill_graph_instruct is used.
+    bool generate_batch(
+        const int32_t * const * text_tokens,     // [n_batch] arrays, each [n_tokens_b]
+        const int32_t * n_tokens_per_batch,       // [n_batch]
+        const float * const * speaker_embds,      // [n_batch] arrays, each [hidden_size] (nullptr allowed)
+        int32_t n_batch,
+        int32_t max_len,
+        std::vector<std::vector<int32_t>> & outputs,  // [n_batch]
+        const int32_t * language_ids = nullptr,   // [n_batch], nullptr = all 2050
+        const int32_t * const * instruct_tokens = nullptr,  // [n_batch], nullptr = no instruct
+        const int32_t * n_instruct_tokens = nullptr,          // [n_batch], ignored when instruct_tokens is null
+        float repetition_penalty = 1.05f,
+        float temperature = 0.9f,
+        int32_t top_k = 50,
+        float top_p = 1.0f,
+        float subtalker_temperature = -1.0f,
+        int32_t subtalker_top_k = -1,
+        float subtalker_top_p = -1.0f);
 
     bool generate_from_prefill(const std::vector<float> & prefill_embd,
                                 const std::vector<float> & trailing_text_hidden,
@@ -424,8 +450,8 @@ private:
                                              int32_t top_k);
 
     // Internal graph builders
-    struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past);
-    struct ggml_cgraph * build_step_graph(int32_t n_past);
+    struct ggml_cgraph * build_prefill_forward_graph(int32_t n_tokens, int32_t n_past, int32_t batch_idx = 0);
+    struct ggml_cgraph * build_step_graph(int32_t n_past, int32_t batch_idx = 0);
 
     bool project_text_tokens(const int32_t * text_tokens, int32_t n_tokens,
                              std::vector<float> & output);
@@ -436,17 +462,14 @@ private:
     bool lookup_single_embedding_row(struct ggml_tensor * embedding, int32_t token_id,
                                      float * out_row);
     
-    // Build computation graph for code predictor
-    struct ggml_cgraph * build_code_pred_graph(int32_t n_prev_codes);
-    
     // Build computation graph for single-step autoregressive code predictor
     // n_past: number of tokens already in KV cache (0-14)
     // generation_step: which codebook we're predicting (0-14)
-    struct ggml_cgraph * build_code_pred_step_graph(int32_t n_past, int32_t generation_step);
+    struct ggml_cgraph * build_code_pred_step_graph(int32_t n_past, int32_t generation_step, int32_t batch_idx = 0);
     
     // Build computation graph for 2-token prefill of code predictor
     // Processes [past_hidden, codec_embd(codebook_0_token)] together
-    struct ggml_cgraph * build_code_pred_prefill_graph();
+    struct ggml_cgraph * build_code_pred_prefill_graph(int32_t batch_idx = 0);
     
     // Parse hyperparameters from GGUF
     bool parse_config(struct gguf_context * ctx);

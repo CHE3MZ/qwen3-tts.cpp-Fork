@@ -208,6 +208,17 @@ public:
                                       const float * ref_samples, int32_t n_ref_samples,
                                       const tts_params  & params = tts_params());
 
+    // Batch synthesis: process N texts simultaneously, sharing the same speaker embedding.
+    // Each entry in the result vector corresponds to one text.
+    // instruct_per_entry: optional per-entry instruct text (VoiceDesign/CustomVoice).
+    //   When non-null, must have the same size as texts. Empty strings = no instruct for that entry.
+    // Returns empty vector on failure (check get_error()).
+    std::vector<tts_result> synthesize_batch(
+        const std::vector<std::string> & texts,
+        const float * speaker_embedding,
+        const tts_params  & params = tts_params(),
+        const std::vector<std::string> * instruct_per_entry = nullptr);
+
     // Convenience: synthesize with a pre-computed speaker embedding vector
     tts_result synthesize_with_embedding(const std::string & text,
                                           const std::vector<float> & embedding,
