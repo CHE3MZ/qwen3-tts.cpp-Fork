@@ -1484,7 +1484,11 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
             v_cache->nb[1], v_cache->nb[2],
             batch_off_v);
         
-        // prefill: use soft_max_ext + causal mask (multi-token, mask required for correctness)
+        // prefill: use soft_max_ext + causal mask (multi-token, causal masking required).
+        // Flash attention is used for single-token decode steps only (build_step_graph).
+        // For multi-token prefill, ggml_flash_attn_ext requires a carefully laid-out
+        // F16 causal mask that depends on the KV cache position encoding — kept as
+        // a future improvement when the exact layout contract is verified.
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         K = ggml_permute(ctx0, K, 0, 2, 1, 3);
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
