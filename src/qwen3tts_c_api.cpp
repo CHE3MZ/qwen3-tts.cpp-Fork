@@ -140,7 +140,7 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
     p->top_k                 = 50;
     p->n_threads             = 0;   // 0 = auto
     p->repetition_penalty    = 1.05f;
-    p->language_id           = 2050;
+    p->language_id           = 0;   // deprecated; language_name="auto" takes precedence
     p->subtalker_temperature = -1.0f;
     p->subtalker_top_k       = -1;
     p->subtalker_top_p       = -1.0f;
@@ -224,12 +224,15 @@ void qwen3_tts_set_progress_callback(Qwen3Tts * tts,
     tts->progress_fn   = fn;
     tts->progress_data = userdata;
     if (fn) {
-        // Wire through to C++ progress callback
-        tts->engine.set_progress_callback([tts](int done, int total) {
+        // Wire through to C++ progress callback.
+        // Return value from fn: non-zero = request early stop.
+        // We honour this by calling set_abort_callback on the engine if stop is requested.
+        tts->engine.set_progress_callback([tts](int done, int total) -> int {
             if (tts->progress_fn) {
-                tts->progress_fn((int32_t)done, (int32_t)total,
-                                  tts->progress_data);
+                return tts->progress_fn((int32_t)done, (int32_t)total,
+                                         tts->progress_data);
             }
+            return 0;
         });
     } else {
         tts->engine.set_progress_callback(nullptr);
@@ -291,6 +294,11 @@ int qwen3_tts_list_languages(const Qwen3Tts * tts, char * buf, int32_t buf_size)
 int32_t qwen3_tts_resolve_language(const Qwen3Tts * tts, const char * name) {
     if (!tts || !name) return -1;
     return tts->engine.resolve_language_id(name);
+}
+
+int32_t qwen3_tts_resolve_speaker(const Qwen3Tts * tts, const char * speaker_name) {
+    if (!tts || !speaker_name) return -1;
+    return tts->engine.resolve_speaker_id(speaker_name);
 }
 
 // ---- simple synthesis -------------------------------------------------------
@@ -600,6 +608,30 @@ int32_t qwen3_tts_synthesize_codes_with_voice_file(
     std::vector<int32_t> codes;
     int32_t n_cb = 0;
     int32_t n_frames = tts->engine.synthesize_codes_with_voice(text, ref_path, codes, n_cb, cpp);
+    if (n_frames < 0) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
+    int32_t ret = run_synthesize_codes(tts, codes, n_cb, codes_out, max_frames, n_codebooks_out);
+    ARP_END
+    return ret;
+}
+
+int32_t qwen3_tts_synthesize_codes_with_voice_samples(
+        Qwen3Tts * tts, const char * text,
+        const float * ref, int32_t n_ref,
+        const Qwen3TtsParams * params,
+        int32_t * codes_out, int32_t max_frames, int32_t * n_codebooks_out) {
+    if (!tts || !text || !ref || n_ref <= 0) return -1;
+    ARP_BEGIN
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+    // Extract speaker embedding from raw samples, then synthesize codes
+    std::vector<float> emb;
+    qwen3_tts::tts_params ep;
+    ep.n_threads = cpp.n_threads;
+    bool ok = tts->engine.extract_speaker_embedding(ref, n_ref, emb, ep);
+    if (!ok) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
+    std::vector<int32_t> codes;
+    int32_t n_cb = 0;
+    int32_t n_frames = tts->engine.synthesize_codes_with_embedding(
+                            text, emb.data(), (int32_t)emb.size(), codes, n_cb, cpp);
     if (n_frames < 0) { tts->last_error = tts->engine.get_error(); ARP_END return -1; }
     int32_t ret = run_synthesize_codes(tts, codes, n_cb, codes_out, max_frames, n_codebooks_out);
     ARP_END

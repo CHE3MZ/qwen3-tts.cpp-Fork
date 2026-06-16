@@ -2,22 +2,22 @@
  *
  * THREAD SAFETY:
  *   A Qwen3Tts* handle is NOT thread-safe. Do not call any function on the
- *   same handle from multiple goroutines/threads concurrently.
+ *   same handle from multiple threads concurrently.
  *   For parallel synthesis, create one handle per worker thread.
- *   The synthesis functions are blocking — run them in a goroutine with a
- *   timeout if cancellation is needed.
+ *   The synthesis functions are blocking — run them in a thread or async task
+ *   with a timeout if cancellation is needed.
  *
- * TYPICAL GO USAGE:
- *   tts := C.qwen3_tts_create(modelDir, 0)
- *   defer C.qwen3_tts_destroy(tts)
+ * TYPICAL USAGE (Go/Rust/Python/C/C++):
+ *   tts = qwen3_tts_create(model_dir, 0);
+ *   // defer/finally: qwen3_tts_destroy(tts)
  *
- *   var params C.Qwen3TtsParams
- *   C.qwen3_tts_default_params(&params)
+ *   Qwen3TtsParams params;
+ *   qwen3_tts_default_params(&params);
  *
- *   result := C.qwen3_tts_synthesize_ex(tts, text, &params)
- *   defer C.qwen3_tts_free_result(result)
- *   if result.success == 0 { ... }
- *   // use result.audio.samples[0..result.audio.n_samples]
+ *   Qwen3TtsResult *result = qwen3_tts_synthesize_ex(tts, text, &params);
+ *   // defer/finally: qwen3_tts_free_result(result)
+ *   if (result->success == 0) { } // check error_msg for details
+ *   // use result->audio.samples[0..result->audio.n_samples]
  */
 #ifndef QWEN3TTS_C_API_H
 #define QWEN3TTS_C_API_H
@@ -65,15 +65,19 @@ typedef struct Qwen3TtsParams {
     int32_t n_threads;              /* 0=auto (hardware_concurrency/2)    */
 
     /* ---- Language / speaker / style ---- */
-    /* Preferred: language_name. Fallback: language_id (deprecated).      */
-    char    language_name[64];      /* "auto","english","chinese",… ""=id */
-    int32_t language_id;            /* deprecated, use language_name      */
+    /* language_name takes precedence over language_id when non-empty.
+     * Preferred: use language_name. language_id is deprecated and ignored
+     * when language_name is set. Set language_name="" to use language_id.  */
+    char    language_name[64];      /* "auto","english","chinese",… ""=use id */
+    int32_t language_id;            /* deprecated; use language_name instead  */
     char    speaker[64];            /* CustomVoice named speaker, e.g. "Vivian" */
     char    instruct[512];          /* VoiceDesign/CustomVoice style text */
 
     /* ---- ICL voice cloning ---- */
     /* Set ref_text + icl_mode=1 for full ICL (requires Mimi encoder).    */
-    char    ref_text[4096];         /* reference transcript                */
+    /* NOTE: ref_text is limited to 4095 bytes. Longer transcripts will   */
+    /* be silently truncated. For long transcripts consider x-vector only.*/
+    char    ref_text[4096];         /* reference transcript (UTF-8)        */
     int32_t icl_mode;               /* 0=x-vector only, 1=ICL mode        */
 
     /* ---- Generation mode ---- */
@@ -225,6 +229,11 @@ int qwen3_tts_list_languages(const Qwen3Tts * tts,
 /* Resolve language name → codec token ID. Returns -1 if not found.     */
 int32_t qwen3_tts_resolve_language(const Qwen3Tts * tts,
                                    const char * language_name);
+
+/* Resolve speaker name → codec token ID. Returns -1 if not found.
+ * Useful for CustomVoice models to map speaker names to their IDs.      */
+int32_t qwen3_tts_resolve_speaker(const Qwen3Tts * tts,
+                                   const char * speaker_name);
 
 /* -------------------------------------------------------------------
  * Synthesis — simple API (caller frees audio with qwen3_tts_free_audio)
@@ -404,6 +413,16 @@ int32_t qwen3_tts_synthesize_codes_with_voice_file(
     Qwen3Tts * tts,
     const char * text,
     const char * reference_audio_path,
+    const Qwen3TtsParams * params,
+    int32_t * codes_out, int32_t max_frames,
+    int32_t * n_codebooks_out);
+
+/* Synthesize codes from raw PCM samples instead of a WAV file path.
+ * ref_samples: float32 PCM at 24 kHz mono, normalized [-1, 1].         */
+int32_t qwen3_tts_synthesize_codes_with_voice_samples(
+    Qwen3Tts * tts,
+    const char * text,
+    const float * ref_samples, int32_t n_ref_samples,
     const Qwen3TtsParams * params,
     int32_t * codes_out, int32_t max_frames,
     int32_t * n_codebooks_out);

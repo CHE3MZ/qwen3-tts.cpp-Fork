@@ -163,8 +163,9 @@ static int do_synthesize(qwen3_tts::Qwen3TTS & tts,
     }
 
     if (!quiet) {
-        tts.set_progress_callback([](int tok, int max) {
+        tts.set_progress_callback([](int tok, int max) -> int {
             fprintf(stderr, "\rGenerating: %d/%d tokens", tok, max);
+            return 0;
         });
     }
 
@@ -408,13 +409,22 @@ int main(int argc, char ** argv) {
     bool server_mode    = false;
 
     qwen3_tts::tts_params params;
+    params.print_timing = true;  // CLI always shows timing; library callers get false by default
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
 
 #define NEXT_ARG(dest)   do { if (++i >= argc) { fprintf(stderr, "Missing value for %s\n", arg.c_str()); return 1; } dest = argv[i]; } while(0)
-#define NEXT_FLOAT(dest) do { if (++i >= argc) { fprintf(stderr, "Missing value for %s\n", arg.c_str()); return 1; } dest = std::stof(argv[i]); } while(0)
-#define NEXT_INT(dest)   do { if (++i >= argc) { fprintf(stderr, "Missing value for %s\n", arg.c_str()); return 1; } dest = std::stoi(argv[i]); } while(0)
+#define NEXT_FLOAT(dest) do { \
+    if (++i >= argc) { fprintf(stderr, "Missing value for %s\n", arg.c_str()); return 1; } \
+    char * _end = nullptr; float _v = strtof(argv[i], &_end); \
+    if (_end == argv[i] || *_end != '\0') { fprintf(stderr, "Invalid float for %s: %s\n", arg.c_str(), argv[i]); return 1; } \
+    dest = _v; } while(0)
+#define NEXT_INT(dest)   do { \
+    if (++i >= argc) { fprintf(stderr, "Missing value for %s\n", arg.c_str()); return 1; } \
+    char * _end = nullptr; long _v = strtol(argv[i], &_end, 10); \
+    if (_end == argv[i] || *_end != '\0') { fprintf(stderr, "Invalid integer for %s: %s\n", arg.c_str(), argv[i]); return 1; } \
+    dest = (int32_t)_v; } while(0)
 
         if      (arg == "-h" || arg == "--help")            { print_usage(argv[0]); return 0; }
         else if (arg == "-m" || arg == "--model")           { NEXT_ARG(model_dir); }
@@ -466,7 +476,10 @@ int main(int argc, char ** argv) {
     }
 
     if (!gen_config_path.empty()) {
-        tts.load_generation_config(gen_config_path);
+        if (!tts.load_generation_config(gen_config_path)) {
+            fprintf(stderr, "Warning: failed to load generation config from %s\n",
+                    gen_config_path.c_str());
+        }
     }
 
     // ---- Info queries --------------------------------------------------
@@ -517,8 +530,9 @@ int main(int argc, char ** argv) {
     }
 
     // ---- One-shot synthesis --------------------------------------------
-    tts.set_progress_callback([](int tok, int max) {
+    tts.set_progress_callback([](int tok, int max) -> int {
         fprintf(stderr, "\rGenerating: %d/%d tokens", tok, max);
+        return 0;  // non-zero would stop generation early
     });
 
     return do_synthesize(tts, text, output_file, reference_audio, ref_text,

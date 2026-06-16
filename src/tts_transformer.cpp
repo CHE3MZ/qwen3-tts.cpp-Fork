@@ -2342,66 +2342,6 @@ bool TTSTransformer::forward_codec(int32_t codec_token, int32_t n_past,
     return forward_step(codec_row.data(), n_past, output, nullptr);
 }
 
-bool TTSTransformer::get_hidden_states(std::vector<float> & hidden) const {
-    if (last_hidden_.empty()) {
-        return false;
-    }
-    hidden = last_hidden_;
-    return true;
-}
-
-bool TTSTransformer::predict_codes(const float * hidden, const int32_t * prev_codes,
-                                    std::vector<float> & output) {
-    if (!model_.ctx) {
-        error_msg_ = "Model not loaded";
-        return false;
-    }
-    
-    const auto & cfg = model_.config;
-    int n_prev = (prev_codes != nullptr) ? cfg.n_codebooks - 1 : 0;
-    
-    struct ggml_cgraph * gf = build_code_pred_graph(n_prev);
-    
-    if (!ggml_backend_sched_alloc_graph(state_.sched, gf)) {
-        error_msg_ = "Failed to allocate code predictor graph";
-        return false;
-    }
-    
-    struct ggml_tensor * inp_hidden = ggml_graph_get_tensor(gf, "inp_hidden");
-    if (inp_hidden) {
-        ggml_backend_tensor_set(inp_hidden, hidden, 0, cfg.hidden_size * sizeof(float));
-    }
-    
-    if (n_prev > 0) {
-        struct ggml_tensor * inp_prev = ggml_graph_get_tensor(gf, "inp_prev_codes");
-        if (inp_prev) {
-            ggml_backend_tensor_set(inp_prev, prev_codes, 0, n_prev * sizeof(int32_t));
-        }
-    }
-    
-    if (ggml_backend_sched_graph_compute(state_.sched, gf) != GGML_STATUS_SUCCESS) {
-        error_msg_ = "Failed to compute code predictor graph";
-        ggml_backend_sched_reset(state_.sched);
-        return false;
-    }
-    
-    output.resize((cfg.n_codebooks - 1) * cfg.code_pred_vocab_size);
-    
-    for (int cb = 0; cb < cfg.n_codebooks - 1; ++cb) {
-        char name[32];
-        snprintf(name, sizeof(name), "logits_cb%d", cb + 1);
-        struct ggml_tensor * cb_logits = ggml_graph_get_tensor(gf, name);
-        if (cb_logits) {
-            ggml_backend_tensor_get(cb_logits, output.data() + cb * cfg.code_pred_vocab_size,
-                                   0, cfg.code_pred_vocab_size * sizeof(float));
-        }
-    }
-    
-    ggml_backend_sched_reset(state_.sched);
-    
-    return true;
-}
-
 static int32_t argmax(const float * data, int32_t n) {
     int32_t max_idx = 0;
     float max_val = data[0];
@@ -3275,21 +3215,6 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
 #endif
 
     return true;
-}
-
-bool TTSTransformer::forward(const int32_t * tokens, int32_t n_tokens, int32_t n_past,
-                              std::vector<float> & output) {
-    return forward_text(tokens, n_tokens, nullptr, n_past, output);
-}
-
-bool TTSTransformer::forward_with_audio(const int32_t * tokens, int32_t n_tokens,
-                                         const float * audio_embd, int32_t n_audio,
-                                         int32_t audio_start_pos, int32_t n_past,
-                                         std::vector<float> & output) {
-    (void)audio_embd;
-    (void)n_audio;
-    (void)audio_start_pos;
-    return forward_text(tokens, n_tokens, nullptr, n_past, output);
 }
 
 // ---------------------------------------------------------------------------

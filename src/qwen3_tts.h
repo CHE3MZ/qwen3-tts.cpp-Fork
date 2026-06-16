@@ -107,7 +107,7 @@ struct tts_params {
 
     // Logging
     bool print_progress = false;
-    bool print_timing   = true;
+    bool print_timing   = false;  // default OFF — matches C API default; set true explicitly if needed
 };
 
 // ============================================================
@@ -119,7 +119,6 @@ struct tts_result {
     bool    success     = false;
     std::string error_msg;
 
-    int64_t t_load_ms     = 0;
     int64_t t_tokenize_ms = 0;
     int64_t t_encode_ms   = 0;
     int64_t t_generate_ms = 0;
@@ -139,7 +138,8 @@ struct tts_result {
 // ============================================================
 
 // Progress callback: (tokens_generated, max_tokens)
-using tts_progress_callback_t = std::function<void(int, int)>;
+// Return non-zero to request early stop (best-effort).
+using tts_progress_callback_t = std::function<int(int, int)>;
 
 // Per-frame logits callback.
 // Called once per generated frame, after CB0 sampling, before CB1-15 prediction.

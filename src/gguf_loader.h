@@ -73,8 +73,15 @@ bool load_tensor_data_from_file(
     enum ggml_backend_dev_type preferred_backend_type = GGML_BACKEND_DEVICE_TYPE_CPU
 );
 
-// Helper to initialize backend with GPU preference and CPU fallback
+// Helper to initialize backend with GPU preference and CPU fallback.
+// Tries: IGPU → GPU → ACCEL → CPU (in that order).
+// component_name is used only in error/log messages (e.g. "TTSTransformer").
+// Returns nullptr only if even the CPU backend fails (should never happen).
 ggml_backend_t init_preferred_backend(const char * component_name, std::string * error_msg);
+
+// Release a backend obtained from init_preferred_backend().
+// Uses release_preferred_backend() instead of ggml_backend_free() to correctly
+// handle GPU backend lifecycle (some backends require a different teardown path).
 void release_preferred_backend(ggml_backend_t backend);
 
 // Helper function to free model resources

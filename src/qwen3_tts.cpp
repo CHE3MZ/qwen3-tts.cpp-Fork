@@ -1123,6 +1123,23 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
         transformer_.clear_logits_callback();
     }
 
+    // Wire progress callback: fire once per generated frame via logits hook.
+    // This integrates progress reporting with generation without a separate mechanism.
+    // If a logits_callback is also set, chain them — progress fires first.
+    if (progress_callback_) {
+        tts_logits_callback_t prog_cb = progress_callback_
+            ? [this, &params](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                int stop = progress_callback_(frame + 1, params.max_audio_tokens);
+                if (stop) return stop;
+                if (logits_callback_) return logits_callback_(frame, lg, sz, tok);
+                return 0;
+              }
+            : tts_logits_callback_t{};
+        if (progress_callback_) {
+            transformer_.set_logits_callback(prog_cb);
+        }
+    }
+
     std::string model_type = get_model_type();
     int32_t     language_id = params_language_id(params);
 

@@ -270,16 +270,6 @@ public:
                       std::vector<float> & output,
                       std::vector<float> * hidden_out = nullptr);
     
-    // Get hidden states from last forward pass (for code predictor)
-    bool get_hidden_states(std::vector<float> & hidden) const;
-    
-    // Run code predictor to get all 16 codebook predictions
-    // hidden: hidden states from talker [hidden_size]
-    // prev_codes: previous codes for codebooks 1-15 (can be nullptr for first step)
-    // output: logits for all 16 codebooks [16, code_pred_vocab_size]
-    bool predict_codes(const float * hidden, const int32_t * prev_codes,
-                       std::vector<float> & output);
-    
     // Run code predictor autoregressively to generate 15 codes (codebooks 1-15)
     // hidden: hidden states from talker [hidden_size]
     // codebook_0_token: the codebook 0 token (used to create 2-token prefill input)
@@ -400,15 +390,6 @@ public:
     const tts_transformer_config & get_config() const { return model_.config; }
 
     const std::string & get_error() const { return error_msg_; }
-    
-    // Legacy interface for compatibility
-    bool forward(const int32_t * tokens, int32_t n_tokens, int32_t n_past,
-                 std::vector<float> & output);
-    
-    bool forward_with_audio(const int32_t * tokens, int32_t n_tokens,
-                            const float * audio_embd, int32_t n_audio,
-                            int32_t audio_start_pos, int32_t n_past,
-                            std::vector<float> & output);
 
     // Prefill embedding builders — public so qwen3_tts.cpp can call them
     bool build_prefill_graph(const int32_t * text_tokens, int32_t n_tokens,
