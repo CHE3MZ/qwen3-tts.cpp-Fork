@@ -347,6 +347,24 @@ int32_t qwen3_tts_load_wav(const char * path,
                             float * samples_out, int32_t max_samples,
                             int32_t * sample_rate_out);
 
+/* Resample float32 PCM audio from one sample rate to another.
+ * Uses Kaiser-windowed sinc interpolation (same resampler used internally
+ * for reference audio input).
+ * input:           float32 PCM samples at input_rate
+ * n_input:         number of input samples
+ * input_rate:      source sample rate (e.g. 24000)
+ * output_rate:     target sample rate (e.g. 48000)
+ * output_out:      caller-allocated buffer; if NULL, returns required size
+ * max_output:      capacity of output_out
+ * Returns number of output samples written, or -1 on failure.
+ *
+ * NOTE: Upsampling from 24 kHz to 48 kHz (2× integer ratio) is lossless.
+ * Upsampling does NOT add audio information above the source Nyquist (12 kHz).
+ * Use for compatibility with pipelines that require 44100 or 48000 Hz. */
+int32_t qwen3_tts_resample(const float * input, int32_t n_input,
+                             int32_t input_rate, int32_t output_rate,
+                             float * output_out, int32_t max_output);
+
 /* -------------------------------------------------------------------
  * Configuration
  * ------------------------------------------------------------------- */

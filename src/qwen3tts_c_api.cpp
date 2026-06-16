@@ -562,6 +562,27 @@ int qwen3_tts_load_generation_config(Qwen3Tts * tts, const char * json_path) {
     return tts->engine.load_generation_config(json_path) ? 1 : 0;
 }
 
+// ---- resampling utility -------------------------------------------------------
+
+int32_t qwen3_tts_resample(const float * input, int32_t n_input,
+                             int32_t input_rate, int32_t output_rate,
+                             float * output_out, int32_t max_output) {
+    if (!input || n_input <= 0 || input_rate <= 0 || output_rate <= 0) return -1;
+    if (input_rate == output_rate) {
+        // No-op: same rate
+        if (!output_out) return n_input;
+        int32_t n = (n_input < max_output) ? n_input : max_output;
+        std::memcpy(output_out, input, n * sizeof(float));
+        return n;
+    }
+    std::vector<float> resampled;
+    qwen3_tts::resample_audio(input, n_input, input_rate, output_rate, resampled);
+    if (!output_out) return (int32_t)resampled.size();  // size-query mode
+    int32_t n = (int32_t)std::min((size_t)max_output, resampled.size());
+    std::memcpy(output_out, resampled.data(), n * sizeof(float));
+    return n;
+}
+
 // ---- logits callback --------------------------------------------------------
 
 void qwen3_tts_set_logits_callback(Qwen3Tts * tts, Qwen3TtsLogitsFn fn, void * userdata) {

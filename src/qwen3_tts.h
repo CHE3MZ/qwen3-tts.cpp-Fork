@@ -402,6 +402,12 @@ bool save_audio_file(const std::string & path,
                      const std::vector<float> & samples,
                      int sample_rate);
 
+// Resample float32 PCM from input_rate to output_rate using Kaiser-windowed sinc.
+// Same resampler used internally for reference audio input.
+void resample_audio(const float * input, int32_t n_input,
+                    int32_t input_rate, int32_t output_rate,
+                    std::vector<float> & output);
+
 bool save_speaker_embedding(const std::string & path,
                              const std::vector<float> & embedding);
 

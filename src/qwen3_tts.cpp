@@ -1431,6 +1431,15 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
 }
 
 // ============================================================
+// Resampling (public wrapper around the internal sinc resampler)
+// ============================================================
+void resample_audio(const float * input, int32_t n_input,
+                    int32_t input_rate, int32_t output_rate,
+                    std::vector<float> & output) {
+    resample_linear(input, (int)n_input, (int)input_rate, output, (int)output_rate);
+}
+
+// ============================================================
 // WAV I/O
 // ============================================================
 bool load_audio_file(const std::string & path, std::vector<float> & samples, int & sample_rate) {
