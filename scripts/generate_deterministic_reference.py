@@ -26,7 +26,7 @@ import torch
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = PROJECT_ROOT / "models" / "Qwen3-TTS-12Hz-0.6B-Base"
 REF_AUDIO_PATH = PROJECT_ROOT / "clone.wav"
-REF_TEXT_PATH = PROJECT_ROOT / "reference_text.txt"
+REF_TEXT_PATH = PROJECT_ROOT / "reference/reference_text.txt"
 OUTPUT_DIR = PROJECT_ROOT / "reference"
 
 SYNTH_TEXT = "Hello."
@@ -488,3 +488,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

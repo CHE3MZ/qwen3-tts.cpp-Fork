@@ -53,7 +53,7 @@ def main():
     # Configuration
     model_path = PROJECT_ROOT / "models" / "Qwen3-TTS-12Hz-0.6B-Base"
     ref_audio_path = PROJECT_ROOT / "clone.wav"
-    ref_text_path = PROJECT_ROOT / "reference_text.txt"
+    ref_text_path = PROJECT_ROOT / "reference/reference_text.txt"
     output_dir = PROJECT_ROOT / "reference"
     
     # Text to synthesize (keep very short for faster generation on CPU)
@@ -326,3 +326,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
