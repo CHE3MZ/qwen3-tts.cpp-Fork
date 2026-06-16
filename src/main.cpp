@@ -7,70 +7,77 @@
 #include <iostream>
 
 static void print_usage(const char * prog) {
-    fprintf(stderr, "Usage: %s [options] -m <model_dir> -t <text>\n\n", prog);
-    fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -m, --model <dir>            Model directory (required)\n");
-    fprintf(stderr, "  -t, --text <text>             Text to synthesize (required)\n");
-    fprintf(stderr, "  -o, --output <file>           Output WAV (default: output.wav)\n");
+    fprintf(stderr, "Usage: %s -m <model_dir> -t <text> [options]\n\n", prog);
+    fprintf(stderr, "Core:\n");
+    fprintf(stderr, "  -m, --model <dir>             Model directory containing GGUF files (required)\n");
+    fprintf(stderr, "  -t, --text <text>              Text to synthesize (required for synthesis)\n");
+    fprintf(stderr, "  -o, --output <file>            Output WAV file (default: output.wav)\n");
+    fprintf(stderr, "  --output-rate <hz>             Resample output to this rate (e.g. 48000).\n");
+    fprintf(stderr, "                                 Default is native 24000 Hz. 48000 is 2x upsample.\n");
+    fprintf(stderr, "                                 NOTE: upsampling does not improve audio quality.\n");
     fprintf(stderr, "\nVoice cloning (Base model):\n");
-    fprintf(stderr, "  -r, --reference <file>        Reference audio WAV for voice cloning\n");
-    fprintf(stderr, "  --ref-text <text>             Reference transcript (enables ICL mode)\n");
-    fprintf(stderr, "  --embedding-in <file>         Load pre-computed speaker embedding\n");
-    fprintf(stderr, "  --embedding-out <file>        Save speaker embedding (skips synthesis)\n");
-    fprintf(stderr, "\nCustomVoice model:\n");
-    fprintf(stderr, "  --speaker <name>              Named speaker (e.g. Vivian, Ryan)\n");
-    fprintf(stderr, "  --list-speakers               List available speakers and exit\n");
-    fprintf(stderr, "\nVoiceDesign / CustomVoice instruct:\n");
-    fprintf(stderr, "  --instruct <text>             Style / emotion instruction\n");
+    fprintf(stderr, "  -r, --reference <file>         Reference audio WAV for voice cloning\n");
+    fprintf(stderr, "  --ref-text <text>              Reference transcript (enables full ICL mode)\n");
+    fprintf(stderr, "  --embedding-in <file>          Load pre-computed speaker embedding (.bin)\n");
+    fprintf(stderr, "  --embedding-out <file>         Save speaker embedding and exit (no synthesis)\n");
+    fprintf(stderr, "\nModel variants:\n");
+    fprintf(stderr, "  --speaker <name>               Named speaker for CustomVoice models\n");
+    fprintf(stderr, "  --list-speakers                List available speakers and exit\n");
+    fprintf(stderr, "  --instruct <text>              Style/emotion instruction (VoiceDesign/CustomVoice)\n");
     fprintf(stderr, "\nLanguage:\n");
-    fprintf(stderr, "  -l, --language <lang>         Language name or codec ID\n");
-    fprintf(stderr, "                                (auto, english, chinese, japanese, korean,\n");
+    fprintf(stderr, "  -l, --language <lang>          Output language (default: auto)\n");
+    fprintf(stderr, "                                 auto, english, chinese, japanese, korean,\n");
     fprintf(stderr, "                                 russian, german, french, spanish, italian,\n");
-    fprintf(stderr, "                                 portuguese, or raw int e.g. 2050)\n");
-    fprintf(stderr, "  --list-languages              List supported languages and exit\n");
-    fprintf(stderr, "\nSampling:\n");
-    fprintf(stderr, "  --temperature <val>           Main-talker temperature (default: 0.9)\n");
-    fprintf(stderr, "  --top-k <n>                   Main-talker top-k (default: 50)\n");
-    fprintf(stderr, "  --top-p <val>                 Top-p (default: 1.0)\n");
-    fprintf(stderr, "  --repetition-penalty <val>    Repetition penalty (default: 1.05)\n");
-    fprintf(stderr, "  --sub-temperature <val>       Sub-talker temperature (-1=inherit)\n");
-    fprintf(stderr, "  --sub-top-k <n>               Sub-talker top-k (-1=inherit)\n");
-    fprintf(stderr, "  --max-tokens <n>              Max audio tokens (default: 4096)\n");
-    fprintf(stderr, "  --non-streaming               Use non-streaming prefill layout\n");
-    fprintf(stderr, "                                (feeds all text at once; matches Python non_streaming_mode=True)\n");
-    fprintf(stderr, "\nServer mode (model loaded once, serves multiple requests):\n");
-    fprintf(stderr, "  --server                      Read JSON requests from stdin, write JSON responses to stdout.\n");
-    fprintf(stderr, "                                Keeps model in memory across requests — no per-request reload.\n");
-    fprintf(stderr, "                                Input format (one JSON object per line):\n");
-    fprintf(stderr, "                                  {\"text\":\"...\",\"output\":\"out.wav\"}\n");
-    fprintf(stderr, "                                Optional fields: \"reference\",\"ref_text\",\"speaker\",\n");
-    fprintf(stderr, "                                  \"instruct\",\"language\",\"temperature\",\"top_k\",\n");
-    fprintf(stderr, "                                  \"top_p\",\"repetition_penalty\",\"max_tokens\"\n");
-    fprintf(stderr, "                                Output format (one JSON object per line):\n");
-    fprintf(stderr, "                                  {\"success\":true,\"output\":\"out.wav\",\"duration_s\":2.5,\n");
-    fprintf(stderr, "                                   \"t_total_ms\":12000}\n");
-    fprintf(stderr, "                                  {\"success\":false,\"error\":\"message\"}\n");
-    fprintf(stderr, "                                Send EOF (Ctrl+D / close stdin) to exit.\n");
+    fprintf(stderr, "                                 portuguese, or raw codec ID (e.g. 2050)\n");
+    fprintf(stderr, "  --list-languages               List supported languages and exit\n");
+    fprintf(stderr, "\nSampling (main talker):\n");
+    fprintf(stderr, "  --temperature <val>            Temperature (default: 0.9, 0=greedy)\n");
+    fprintf(stderr, "  --top-k <n>                    Top-k (default: 50, 0=disabled)\n");
+    fprintf(stderr, "  --top-p <val>                  Top-p nucleus sampling (default: 1.0)\n");
+    fprintf(stderr, "  --min-p <val>                  Min-p: keep tokens where prob >= val*max (0=off)\n");
+    fprintf(stderr, "  --repetition-penalty <val>     Repetition penalty (default: 1.05)\n");
+    fprintf(stderr, "  --frequency-penalty <val>      Frequency penalty: subtract val*count (0=off)\n");
+    fprintf(stderr, "  --presence-penalty <val>       Presence penalty: flat subtract if seen (0=off)\n");
+    fprintf(stderr, "  --dry-multiplier <val>         DRY n-gram penalty scale (0=off, try 0.8)\n");
+    fprintf(stderr, "  --dyntemp-range <val>          Dynamic temperature half-range (0=off)\n");
+    fprintf(stderr, "\nSampling (sub-talker / code predictor):\n");
+    fprintf(stderr, "  --sub-temperature <val>        Sub-talker temperature (-1=inherit main)\n");
+    fprintf(stderr, "  --sub-top-k <n>                Sub-talker top-k (-1=inherit main)\n");
+    fprintf(stderr, "  --sub-top-p <val>              Sub-talker top-p (-1=inherit main)\n");
+    fprintf(stderr, "\nGeneration:\n");
+    fprintf(stderr, "  --max-tokens <n>               Max audio frames to generate (default: 4096)\n");
+    fprintf(stderr, "  --non-streaming                Non-streaming prefill layout\n");
+    fprintf(stderr, "\nServer mode:\n");
+    fprintf(stderr, "  --server                       Load model once, read JSON from stdin,\n");
+    fprintf(stderr, "                                 write JSON to stdout. One request per line.\n");
+    fprintf(stderr, "                                 Request:  {\"text\":\"...\",\"output\":\"out.wav\",...}\n");
+    fprintf(stderr, "                                 Response: {\"success\":true,\"duration_s\":2.5,...}\n");
+    fprintf(stderr, "                                 Send EOF to exit.\n");
     fprintf(stderr, "\nMisc:\n");
-    fprintf(stderr, "  -j, --threads <n>             Threads (default: auto)\n");
-    fprintf(stderr, "  --gen-config <file>           Load generation_config.json\n");
-    fprintf(stderr, "  -h, --help                    Show help\n");
+    fprintf(stderr, "  -j, --threads <n>              CPU threads (default: auto-detect)\n");
+    fprintf(stderr, "  --gen-config <file>            Load generation_config.json\n");
+    fprintf(stderr, "  --version                      Show version and exit\n");
+    fprintf(stderr, "  -h, --help                     Show this help\n");
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  # Basic synthesis\n");
-    fprintf(stderr, "  %s -m ./models -t \"Hello!\" -o hello.wav\n", prog);
-    fprintf(stderr, "  # Voice clone (x-vector only)\n");
+    fprintf(stderr, "  %s -m ./models -t \"Hello, world!\" -o hello.wav\n", prog);
+    fprintf(stderr, "  # Voice clone\n");
     fprintf(stderr, "  %s -m ./models -t \"Hello!\" -r ref.wav -o clone.wav\n", prog);
-    fprintf(stderr, "  # Voice clone with ICL\n");
-    fprintf(stderr, "  %s -m ./models -t \"Hello!\" -r ref.wav --ref-text \"Reference text.\" -o icl.wav\n", prog);
-    fprintf(stderr, "  # CustomVoice\n");
-    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --speaker Vivian --instruct \"Happy tone\" -o cv.wav\n", prog);
-    fprintf(stderr, "  # VoiceDesign\n");
-    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --instruct \"Speak softly\" -o vd.wav\n", prog);
-    fprintf(stderr, "  # Save embedding, then reuse\n");
-    fprintf(stderr, "  %s -m ./models -r ref.wav --embedding-out spk.bin\n", prog);
-    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --embedding-in spk.bin -o hello.wav\n", prog);
-    fprintf(stderr, "  # Server mode (load once, serve many)\n");
+    fprintf(stderr, "  # Voice clone with ICL (better quality)\n");
+    fprintf(stderr, "  %s -m ./models -t \"Hello!\" -r ref.wav --ref-text \"The reference.\" -o icl.wav\n", prog);
+    fprintf(stderr, "  # CustomVoice named speaker\n");
+    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --speaker Vivian -o vivian.wav\n", prog);
+    fprintf(stderr, "  # VoiceDesign (describe the voice)\n");
+    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --instruct \"Calm, warm female voice\" -o vd.wav\n", prog);
+    fprintf(stderr, "  # Chinese synthesis\n");
+    fprintf(stderr, "  %s -m ./models -t \"你好世界\" -l chinese -o chinese.wav\n", prog);
+    fprintf(stderr, "  # Save speaker embedding for fast reuse\n");
+    fprintf(stderr, "  %s -m ./models -r ref.wav --embedding-out voice.bin\n", prog);
+    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --embedding-in voice.bin -o out.wav\n", prog);
+    fprintf(stderr, "  # Server mode\n");
     fprintf(stderr, "  %s -m ./models --server\n", prog);
+    fprintf(stderr, "  # 48 kHz output (for DAW/video compatibility)\n");
+    fprintf(stderr, "  %s -m ./models -t \"Hello!\" --output-rate 48000 -o hello_48k.wav\n", prog);
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +161,8 @@ static int do_synthesize(qwen3_tts::Qwen3TTS & tts,
                           const std::string & embedding_in,
                           const std::string & embedding_out_path,
                           qwen3_tts::tts_params params,
-                          bool quiet) {
+                          bool quiet,
+                          int32_t output_rate = 0) {
 
     // Propagate ICL mode
     if (!ref_text.empty()) {
@@ -217,15 +225,29 @@ static int do_synthesize(qwen3_tts::Qwen3TTS & tts,
         return 1;
     }
 
-    if (!qwen3_tts::save_audio_file(output_file, result.audio, result.sample_rate)) {
+    // Optionally resample output to a different rate (e.g. 48000 for DAW compatibility)
+    std::vector<float> final_audio = result.audio;
+    int32_t final_rate = result.sample_rate;
+    if (output_rate > 0 && output_rate != result.sample_rate) {
+        std::vector<float> resampled;
+        qwen3_tts::resample_audio(result.audio.data(), (int32_t)result.audio.size(),
+                                   result.sample_rate, output_rate, resampled);
+        final_audio = std::move(resampled);
+        final_rate  = output_rate;
+        if (!quiet)
+            fprintf(stderr, "Resampled: %d Hz -> %d Hz\n", result.sample_rate, output_rate);
+    }
+
+    if (!qwen3_tts::save_audio_file(output_file, final_audio, final_rate)) {
         fprintf(stderr, "Error: failed to save %s\n", output_file.c_str());
         return 1;
     }
 
     if (!quiet) {
-        fprintf(stderr, "Saved: %s (%.2f s)\n",
+        fprintf(stderr, "Saved: %s (%.2f s @ %d Hz)\n",
                 output_file.c_str(),
-                (float)result.audio.size() / (float)result.sample_rate);
+                (float)final_audio.size() / (float)final_rate,
+                final_rate);
     }
 
     if (!quiet && params.print_timing) {
@@ -407,6 +429,7 @@ int main(int argc, char ** argv) {
     bool list_speakers  = false;
     bool list_languages = false;
     bool server_mode    = false;
+    int32_t output_rate = 0;  // 0 = native 24000 Hz, no resampling
 
     qwen3_tts::tts_params params;
     params.print_timing = true;  // CLI always shows timing; library callers get false by default
@@ -427,6 +450,7 @@ int main(int argc, char ** argv) {
     dest = (int32_t)_v; } while(0)
 
         if      (arg == "-h" || arg == "--help")            { print_usage(argv[0]); return 0; }
+        else if (arg == "--version")                        { fprintf(stdout, "qwen3-tts-cli 0.1.0 (C++17/GGML)\n"); return 0; }
         else if (arg == "-m" || arg == "--model")           { NEXT_ARG(model_dir); }
         else if (arg == "-t" || arg == "--text")            { NEXT_ARG(text); }
         else if (arg == "-o" || arg == "--output")          { NEXT_ARG(output_file); }
@@ -440,11 +464,18 @@ int main(int argc, char ** argv) {
         else if (arg == "--temperature")                    { NEXT_FLOAT(params.temperature); }
         else if (arg == "--top-k")                          { NEXT_INT(params.top_k); }
         else if (arg == "--top-p")                          { NEXT_FLOAT(params.top_p); }
+        else if (arg == "--min-p")                          { NEXT_FLOAT(params.min_p); }
         else if (arg == "--repetition-penalty")             { NEXT_FLOAT(params.repetition_penalty); }
+        else if (arg == "--frequency-penalty")              { NEXT_FLOAT(params.frequency_penalty); }
+        else if (arg == "--presence-penalty")               { NEXT_FLOAT(params.presence_penalty); }
+        else if (arg == "--dry-multiplier")                 { NEXT_FLOAT(params.dry_multiplier); }
+        else if (arg == "--dyntemp-range")                  { NEXT_FLOAT(params.dyntemp_range); }
         else if (arg == "--sub-temperature")                { NEXT_FLOAT(params.subtalker_temperature); }
         else if (arg == "--sub-top-k")                      { NEXT_INT(params.subtalker_top_k); }
+        else if (arg == "--sub-top-p")                      { NEXT_FLOAT(params.subtalker_top_p); }
         else if (arg == "--max-tokens")                     { NEXT_INT(params.max_audio_tokens); }
         else if (arg == "--non-streaming")                  { params.non_streaming_mode = true; }
+        else if (arg == "--output-rate")                    { NEXT_INT(output_rate); }
         else if (arg == "-j" || arg == "--threads")         { NEXT_INT(params.n_threads); }
         else if (arg == "--gen-config")                     { NEXT_ARG(gen_config_path); }
         else if (arg == "--list-speakers")                  { list_speakers  = true; }
@@ -536,5 +567,6 @@ int main(int argc, char ** argv) {
     });
 
     return do_synthesize(tts, text, output_file, reference_audio, ref_text,
-                         embedding_in, embedding_out, params, /*quiet=*/false);
+                         embedding_in, embedding_out, params, /*quiet=*/false,
+                         output_rate);
 }
