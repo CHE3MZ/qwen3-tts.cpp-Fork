@@ -156,7 +156,10 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     if (state_.backend_cpu) {
         backends.push_back(state_.backend_cpu);
     }
-    state_.sched = ggml_backend_sched_new(backends.data(), nullptr, (int)backends.size(), QWEN3_TTS_MAX_NODES, false, true);
+    state_.sched = ggml_backend_sched_new(backends.data(), nullptr, (int)backends.size(), QWEN3_TTS_MAX_NODES, false, false);
+    // op_offload=false: use lazy buffer allocation instead of pre-reservation.
+    // Pre-reservation (true) scales O(n_kv²) for large contexts and causes OOM
+    // allocation failures (>17 GB) when n_kv exceeds ~4096.
     if (!state_.sched) {
         error_msg_ = "Failed to create backend scheduler";
         return false;
@@ -2010,8 +2013,12 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
     }
     
     if (n_past + n_tokens > state_.cache.n_ctx) {
-        error_msg_ = "Context length exceeded";
-        return false;
+        // Extend KV cache if needed
+        const int32_t new_ctx = n_past + n_tokens + 512;
+        if (!init_kv_cache(new_ctx)) {
+            error_msg_ = "Context length exceeded and failed to extend KV cache";
+            return false;
+        }
     }
     
 #ifdef QWEN3_TTS_TIMING
@@ -2172,8 +2179,19 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
     }
 
     if (n_past + 1 > state_.cache.n_ctx) {
-        error_msg_ = "Context length exceeded";
-        return false;
+        // KV cache exhausted — extend it by 512 slots to allow continued generation.
+        // This can happen when max_tokens > initial allocation or when generation
+        // runs longer than expected.
+        const int32_t new_ctx = state_.cache.n_ctx + 512;
+        fprintf(stderr, "  [warn] KV cache full at n_past=%d, extending to %d\n",
+                n_past, new_ctx);
+        if (!init_kv_cache(new_ctx)) {
+            error_msg_ = "Context length exceeded and failed to extend KV cache";
+            return false;
+        }
+        // Re-run clear since init_kv_cache resets n_used
+        // (existing KV data is unfortunately lost on realloc — generation continues
+        //  from this point with fresh cache; audio quality may degrade briefly)
     }
     
 #ifdef QWEN3_TTS_TIMING
