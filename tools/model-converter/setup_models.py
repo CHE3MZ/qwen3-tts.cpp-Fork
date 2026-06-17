@@ -35,7 +35,7 @@ MODELS_DIR  = REPO_ROOT / "models"
 # ---- Available model configurations -----------------------------
 MODEL_VARIANTS = {
     "base": {
-        "label": "Base — Voice Cloning (clone any voice from a reference WAV)",
+        "label": "Base — Voice Cloning + anonymous synthesis (recommended)",
         "recommended": True,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
@@ -43,7 +43,7 @@ MODEL_VARIANTS = {
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-Base",
     },
     "custom_voice": {
-        "label": "CustomVoice — Named Speakers (pick from built-in voices: Vivian, Ryan, etc.)",
+        "label": "CustomVoice — Named speaker presets + voice cloning + instruct (1.7B)",
         "recommended": False,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -51,7 +51,7 @@ MODEL_VARIANTS = {
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
     },
     "voice_design": {
-        "label": "VoiceDesign — Describe a voice in natural language",
+        "label": "VoiceDesign — Describe a voice in natural language + voice cloning (1.7B)",
         "recommended": False,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
@@ -196,17 +196,21 @@ All models output 24 kHz mono audio.
   Base          — VOICE CLONING. Clone any voice from a short reference WAV file.
                   Give it 3-30 seconds of someone speaking and it copies their voice.
                   Best for: cloning your own voice, a celebrity, or any audio sample.
+                  Also works: basic synthesis with no reference (anonymous neutral voice).
                   [Recommended for most users]
 
   CustomVoice   — NAMED SPEAKERS. Pick from ~30 built-in voice presets by name
                   (e.g. Vivian, Ryan, Emma). No reference audio needed.
                   Best for: consistent branded voices without needing reference audio.
-                  NOT the same as voice cloning — these are fixed pre-baked voices.
+                  Also works: voice cloning with a reference WAV (same as Base);
+                              style/instruct text on 1.7B (e.g. "speak slowly").
+                  Note: named speaker presets are unique to this variant.
 
   VoiceDesign   — VOICE DESCRIPTION. Describe a voice in natural language:
                   e.g. "Calm, warm female voice with a slight British accent".
                   Best for: creating novel voices when you don't have reference audio.
-                  Note: instruct mode requires 1.7B model (0.6B ignores the description).
+                  Also works: voice cloning with a reference WAV (same as Base).
+                  Note: instruct/description mode requires 1.7B (0.6B ignores it).
 """)
     variant_keys = list(MODEL_VARIANTS.keys())
     if non_interactive:
@@ -215,7 +219,7 @@ All models output 24 kHz mono audio.
     else:
         chosen_variant = ask("Select variant (1-3)", variant_keys, default="base")
     variant_info = MODEL_VARIANTS[chosen_variant]
-    print(f"  → {variant_info['label']}")
+    print(f"  -> {variant_info['label']}")
 
     # ---- Step 2: Model size --------------------------------------
     step(2, TOTAL_STEPS, "Choose model size")
@@ -229,7 +233,7 @@ All models output 24 kHz mono audio.
         print(f"  [non-interactive] Using: {chosen_size}")
     else:
         chosen_size = ask("Select size (1-2)", ["0.6b", "1.7b"], default="0.6b")
-    print(f"  → {chosen_size}")
+    print(f"  -> {chosen_size}")
 
     if chosen_variant == "voice_design" and chosen_size == "0.6b":
         print("\n  [note] VoiceDesign instruct mode is not supported on 0.6B.")
@@ -246,7 +250,7 @@ All models output 24 kHz mono audio.
         print(f"  [non-interactive] Using: {chosen_quant}")
     else:
         chosen_quant = ask("Select quantization", list(QUANT_OPTIONS.keys()), default="q6_k")
-    print(f"  → {chosen_quant}")
+    print(f"  -> {chosen_quant}")
 
     # ---- Step 4: Mimi encoder precision --------------------------
     step(4, TOTAL_STEPS, "Choose Mimi encoder precision (for ICL voice cloning)")
@@ -264,7 +268,7 @@ All models output 24 kHz mono audio.
     else:
         default_mimi = "f32" if chosen_variant == "base" else "f16"
         chosen_mimi = ask("Select Mimi precision", list(MIMI_QUANT_OPTIONS.keys()), default=default_mimi)
-    print(f"  → {chosen_mimi}")
+    print(f"  -> {chosen_mimi}")
 
     # ---- Step 5: HuggingFace token -------------------------------
     step(5, TOTAL_STEPS, "HuggingFace authentication")
@@ -325,7 +329,7 @@ All models output 24 kHz mono audio.
     need_tok_download  = not tok_local_dir.exists()
 
     if need_tts_download:
-        print(f"\n  Downloading {repo_id} → {local_dir} ...")
+        print(f"\n  Downloading {repo_id} -> {local_dir} ...")
         from huggingface_hub import snapshot_download
         snapshot_download(
             repo_id=repo_id,
@@ -339,7 +343,7 @@ All models output 24 kHz mono audio.
 
     # 7b: Download tokenizer
     if need_tok_download:
-        print(f"\n  Downloading {TOKENIZER_REPO} → {tok_local_dir} ...")
+        print(f"\n  Downloading {TOKENIZER_REPO} -> {tok_local_dir} ...")
         from huggingface_hub import snapshot_download
         snapshot_download(
             repo_id=TOKENIZER_REPO,
@@ -352,7 +356,7 @@ All models output 24 kHz mono audio.
 
     # 7c: Convert TTS model to GGUF
     if not out_tts.exists():
-        print(f"\n  Converting TTS model → {out_tts.name} ...")
+        print(f"\n  Converting TTS model -> {out_tts.name} ...")
         run([
             sys.executable,
             str(SCRIPTS_DIR / "convert_tts_to_gguf.py"),
@@ -366,7 +370,7 @@ All models output 24 kHz mono audio.
 
     # 7d: Convert tokenizer to GGUF
     if not out_tok.exists():
-        print(f"\n  Converting tokenizer → {out_tok.name} ...")
+        print(f"\n  Converting tokenizer -> {out_tok.name} ...")
         run([
             sys.executable,
             str(SCRIPTS_DIR / "convert_tokenizer_to_gguf.py"),
@@ -413,3 +417,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(non_interactive=args.non_interactive, hf_token=args.hf_token)
+
