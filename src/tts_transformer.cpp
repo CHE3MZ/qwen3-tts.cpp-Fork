@@ -183,23 +183,26 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     }
 
     // ---- Metal shader warmup ------------------------------------------------
-    // On Apple Silicon, GGML compiles Metal shaders JIT on the first graph that
-    // uses each kernel variant. If this happens during the first real synthesis
-    // it interleaves compilation with inference, causing corrupted sampler outputs
-    // for early frames and preventing EOS from being sampled cleanly.
-    // Fix: run dummy prefill + step graphs at load time so ALL kernel variants
-    // used during inference are compiled and cached before synthesis begins.
+    // On Apple Silicon, GGML compiles Metal shaders JIT as the KV cache grows —
+    // kernel_mul_mv_f16_f32_nsg=N variants compile at n_kv thresholds ~32/64/128/256.
+    // Running the step graph at increasing KV sizes forces all variants to compile
+    // upfront so no shader compilation happens during real synthesis.
 #if defined(__APPLE__)
     {
         ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
         if (dev && ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU) {
             fprintf(stderr, "  Warming up Metal shader cache...\n");
 
-            // Allocate minimal KV caches so graph builders have valid tensors
-            if (init_kv_cache(4, 1) && init_code_pred_kv_cache(4, 1)) {
+            // KV sizes that trigger new nsg variant compilation
+            const int warmup_kv_sizes[] = {1, 32, 64, 128, 256, 512};
+            const int n_warmup = (int)(sizeof(warmup_kv_sizes) / sizeof(warmup_kv_sizes[0]));
 
-                // 1. Warm up prefill graph (uses mul_mm, get_rows, soft_max, concat...)
-                {
+            for (int wi = 0; wi < n_warmup; ++wi) {
+                int kv = warmup_kv_sizes[wi];
+                if (!init_kv_cache(kv + 1, 1) || !init_code_pred_kv_cache(kv + 2, 1)) break;
+
+                // Prefill graph (only needed once — covers mul_mm, get_rows, soft_max)
+                if (wi == 0) {
                     struct ggml_cgraph * gf = build_prefill_forward_graph(1, 0, 0);
                     if (gf && ggml_backend_sched_alloc_graph(state_.sched, gf)) {
                         struct ggml_tensor * t = ggml_graph_get_tensor(gf, "inp_prefill_embd");
@@ -211,20 +214,17 @@ bool TTSTransformer::load_model(const std::string & model_path) {
                     }
                 }
 
-                // 2. Warm up decode step graph (uses mul_mv, flash_attn_ext_vec...)
-                {
-                    struct ggml_cgraph * gf = build_step_graph(1, 0);
-                    if (gf && ggml_backend_sched_alloc_graph(state_.sched, gf)) {
-                        struct ggml_tensor * t = ggml_graph_get_tensor(gf, "inp_step_embd");
-                        struct ggml_tensor * p = ggml_graph_get_tensor(gf, "inp_pos");
-                        if (t) ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
-                        if (p) ggml_backend_tensor_memset(p, 0, 0, ggml_nbytes(p));
-                        ggml_backend_sched_graph_compute(state_.sched, gf);
-                        ggml_backend_sched_reset(state_.sched);
-                    }
+                // Step graph at this KV size — triggers nsg variant for this tier
+                struct ggml_cgraph * gf = build_step_graph(kv, 0);
+                if (gf && ggml_backend_sched_alloc_graph(state_.sched, gf)) {
+                    struct ggml_tensor * t = ggml_graph_get_tensor(gf, "inp_step_embd");
+                    struct ggml_tensor * p = ggml_graph_get_tensor(gf, "inp_pos");
+                    if (t) ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
+                    if (p) ggml_backend_tensor_memset(p, 0, 0, ggml_nbytes(p));
+                    ggml_backend_sched_graph_compute(state_.sched, gf);
+                    ggml_backend_sched_reset(state_.sched);
                 }
 
-                // Free temporary caches — synthesis will re-init with correct sizes
                 free_tts_kv_cache(state_.cache);
                 free_tts_kv_cache(state_.code_pred_cache);
             }
@@ -1685,18 +1685,14 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past, int32_t ba
             v_cache->nb[1], v_cache->nb[2],
             batch_off_v);
         
-        // Use standard softmax-based attention instead of flash_attn_ext.
-        // ggml_flash_attn_ext switches kernel variants at n_kv=20 on Metal,
-        // and the non-vec variant (n_kv>=20) produces incorrect output on
-        // Apple Silicon causing EOS to never be sampled. The softmax path
-        // is numerically correct on all backends including Metal.
+        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
+        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
-        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
+        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
+        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         
@@ -1999,14 +1995,14 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
             v_cache->nb[1], v_cache->nb[2],
             batch_off_v_cs);
         
-        // Use standard softmax-based attention — see build_step_graph for explanation.
+        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
+        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
-        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
-        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
-        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
+        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
+        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
+        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
+        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
+        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         

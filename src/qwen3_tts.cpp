@@ -526,7 +526,20 @@ static int32_t resolve_dialect_language(const tts_transformer_config & cfg,
 }
 
 int32_t Qwen3TTS::params_language_id(const tts_params & params) const {
-    return resolve_language_id(params.language.empty() ? "auto" : params.language);
+    std::string lang = params.language.empty() ? "auto" : params.language;
+
+    // The 1.7B Base model requires a language token to reliably sample EOS.
+    // Without it, generation free-runs to max_tokens for short inputs.
+    // When the user hasn't specified a language ("auto"), default to english
+    // for 1.7B so it always gets a language token.
+    if (lang == "auto") {
+        const std::string & sz = transformer_.get_config().model_size;
+        if (sz == "1b7" || sz == "1.7b") {
+            lang = "english";
+        }
+    }
+
+    return resolve_language_id(lang);
 }
 
 // --- ensure_encoder_loaded -------------------------------------------------
