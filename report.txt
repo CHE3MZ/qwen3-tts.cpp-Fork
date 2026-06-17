@@ -1,0 +1,38 @@
+username@usernames-air qwen3-tts-main % ./build-ninja/qwen3-tts-cli -m ./models -t 'Hello, world' -o hello.wav
+Loading models from: ./models
+Loading TTS model: ./models/qwen3-tts-1.7b-q8_0.gguf
+  Text tokenizer loaded: vocab_size=151936
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: loaded in 0.005 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple9  (1009)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 12713.12 MB
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M4
+ggml_metal_init: picking default device: Apple M4
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+ggml_metal_free: deallocating
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M4
+ggml_metal_init: picking default device: Apple M4
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+  TTSTransformer backend: MTL0
+  CoreML code predictor load failed: Model does not exist at models/coreml/code_predictor.mlpackage -- file:///Users/username/Desktop/qwen3-tts-main/
+  Falling back to GGML code predictor
+  Warming up Metal shader cache...
+zsh: segmentation fault  ./build-ninja/qwen3-tts-cli -m ./models -t 'Hello, world' -o hello.wav
