@@ -1778,7 +1778,7 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph(int32_t batch
     const int n_head = cfg.n_attention_heads;
     const int n_kv_head = cfg.n_key_value_heads;
     const int head_dim = cfg.head_dim;
-    const int eps = cfg.rms_norm_eps;
+    const float eps = cfg.rms_norm_eps;
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.code_pred_layers;
     const int n_tokens = 2;
