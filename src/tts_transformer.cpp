@@ -1685,14 +1685,18 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past, int32_t ba
             v_cache->nb[1], v_cache->nb[2],
             batch_off_v);
         
-        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
-        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
+        // Use standard softmax-based attention instead of flash_attn_ext.
+        // ggml_flash_attn_ext switches kernel variants at n_kv=20 on Metal,
+        // and the non-vec variant (n_kv>=20) produces incorrect output on
+        // Apple Silicon causing EOS to never be sampled. The softmax path
+        // is numerically correct on all backends including Metal.
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
-        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
-        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
-        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
+        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
+        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
+        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
+        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
+        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         
@@ -1995,14 +1999,14 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
             v_cache->nb[1], v_cache->nb[2],
             batch_off_v_cs);
         
-        // flash attention: Q[head_dim, n_tokens, n_head], K/V[head_dim, n_kv, n_head_kv]
-        // V is already non-transposed in the KV cache — exactly what flash_attn_ext needs
+        // Use standard softmax-based attention — see build_step_graph for explanation.
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-        K = ggml_cont(ctx0, ggml_permute(ctx0, K, 0, 2, 1, 3));
-        V = ggml_cont(ctx0, ggml_permute(ctx0, V, 0, 2, 1, 3));
-        struct ggml_tensor * KQV = ggml_flash_attn_ext(ctx0, Q, K, V, nullptr, KQscale, 0.0f, 0.0f);
-        ggml_flash_attn_ext_set_prec(KQV, GGML_PREC_F32);
-        // flash_attn_ext output: [head_dim, n_head, n_tokens] -> reshape to [n_head*head_dim, n_tokens]
+        K = ggml_permute(ctx0, K, 0, 2, 1, 3);
+        V = ggml_permute(ctx0, V, 0, 2, 1, 3);
+        struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
+        KQ = ggml_soft_max_ext(ctx0, KQ, nullptr, KQscale, 0.0f);
+        V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
+        struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
         
