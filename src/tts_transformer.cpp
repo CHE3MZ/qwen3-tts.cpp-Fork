@@ -3571,15 +3571,41 @@ bool TTSTransformer::generate_icl(
     std::vector<float> step_embd(cfg.hidden_size, 0.0f);
     std::vector<float> embd_row(cfg.hidden_size);
 
+    // Token history and counts for extended sampling (freq/presence/DRY penalties)
+    std::vector<int32_t>            cb0_token_history;
+    std::unordered_map<int32_t,int32_t> cb0_token_counts;
+
+    // Build the sampling params struct once — reused every frame
+    sample_token_params stp;
+    stp.vocab_size         = cfg.codec_vocab_size;
+    stp.eos_id             = cfg.codec_eos_id;
+    stp.suppress_start     = suppress_start;
+    stp.repetition_penalty = repetition_penalty;
+    stp.frequency_penalty  = ext_frequency_penalty;
+    stp.presence_penalty   = ext_presence_penalty;
+    stp.temperature        = temperature;
+    stp.dyntemp_range      = ext_dyntemp_range;
+    stp.dyntemp_exponent   = ext_dyntemp_exponent;
+    stp.top_k              = top_k;
+    stp.top_p              = top_p;
+    stp.min_p              = ext_min_p;
+    stp.dry_multiplier     = ext_dry_multiplier;
+    stp.dry_base           = ext_dry_base;
+    stp.dry_allowed_length = ext_dry_allowed_length;
+    stp.dry_penalty_last_n = ext_dry_penalty_last_n;
+
     for (int frame = 0; frame < max_len; ++frame) {
         int32_t next_token = sample_token(
-            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
-            generated_cb0_tokens, repetition_penalty,
-            temperature, top_k, top_p, probs, rng_);
+            logits, generated_cb0_tokens,
+            (ext_dry_multiplier != 0.0f) ? &cb0_token_history : nullptr,
+            (ext_frequency_penalty != 0.0f || ext_presence_penalty != 0.0f) ? &cb0_token_counts : nullptr,
+            probs, rng_, stp);
 
         if (next_token == cfg.codec_eos_id) break;
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
+        cb0_token_history.push_back(next_token);
+        cb0_token_counts[next_token]++;
 
         std::vector<int32_t> codes_1_15;
         if (!predict_codes_autoregressive(last_hidden_.data(), frame_codes[0],
@@ -3666,15 +3692,40 @@ bool TTSTransformer::generate_from_prefill(
     std::vector<float> step_embd(H, 0.0f);
     std::vector<float> embd_row(H);
 
+    // Token history and counts for extended sampling
+    std::vector<int32_t>            cb0_token_history;
+    std::unordered_map<int32_t,int32_t> cb0_token_counts;
+
+    sample_token_params stp;
+    stp.vocab_size         = cfg.codec_vocab_size;
+    stp.eos_id             = cfg.codec_eos_id;
+    stp.suppress_start     = suppress_start;
+    stp.repetition_penalty = repetition_penalty;
+    stp.frequency_penalty  = ext_frequency_penalty;
+    stp.presence_penalty   = ext_presence_penalty;
+    stp.temperature        = temperature;
+    stp.dyntemp_range      = ext_dyntemp_range;
+    stp.dyntemp_exponent   = ext_dyntemp_exponent;
+    stp.top_k              = top_k;
+    stp.top_p              = top_p;
+    stp.min_p              = ext_min_p;
+    stp.dry_multiplier     = ext_dry_multiplier;
+    stp.dry_base           = ext_dry_base;
+    stp.dry_allowed_length = ext_dry_allowed_length;
+    stp.dry_penalty_last_n = ext_dry_penalty_last_n;
+
     for (int frame = 0; frame < max_len; ++frame) {
         int32_t next_token = sample_token(
-            logits, cfg.codec_vocab_size, cfg.codec_eos_id, suppress_start,
-            generated_cb0_tokens, repetition_penalty,
-            temperature, top_k, top_p, probs, rng_);
+            logits, generated_cb0_tokens,
+            (ext_dry_multiplier != 0.0f) ? &cb0_token_history : nullptr,
+            (ext_frequency_penalty != 0.0f || ext_presence_penalty != 0.0f) ? &cb0_token_counts : nullptr,
+            probs, rng_, stp);
 
         if (next_token == cfg.codec_eos_id) break;
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
+        cb0_token_history.push_back(next_token);
+        cb0_token_counts[next_token]++;
 
         // Fire per-frame logits callback
         if (logits_cb_) {
