@@ -174,8 +174,9 @@ struct tts_transformer_model {
     struct ggml_tensor * code_pred_proj_bias = nullptr;  // [code_pred_hidden_size]
 
     // Code predictor per-codebook embeddings and heads (15 codebooks, 0 uses talker output)
-    std::vector<struct ggml_tensor *> code_pred_embd;  // [hidden_size, code_pred_vocab_size] x 15 (always talker hidden_size)
-    std::vector<struct ggml_tensor *> code_pred_head;  // [hidden_size, code_pred_vocab_size] x 15
+    // code_pred_embd is in talker space (cfg.hidden_size), projected by code_pred_proj if needed
+    std::vector<struct ggml_tensor *> code_pred_embd;  // [hidden_size, code_pred_vocab_size] x 15
+    std::vector<struct ggml_tensor *> code_pred_head;  // [code_pred_hidden_size, code_pred_vocab_size] x 15
     
     // GGML context for tensor metadata
     struct ggml_context * ctx = nullptr;

@@ -525,6 +525,18 @@ static int32_t resolve_dialect_language(const tts_transformer_config & cfg,
     return -2;
 }
 
+// Returns true if model_size matches the given pattern case-insensitively.
+// Pattern "1.7b" matches "1.7b", "1.7B", "1B7", etc.
+static bool is_model_size_match(const std::string & sz, const char * pattern) {
+    std::string a = sz, b = pattern;
+    for (char & c : a) c = (char)tolower((unsigned char)c);
+    for (char & c : b) c = (char)tolower((unsigned char)c);
+    // Remove dots from both for flexible matching
+    a.erase(std::remove(a.begin(), a.end(), '.'), a.end());
+    b.erase(std::remove(b.begin(), b.end(), '.'), b.end());
+    return a == b;
+}
+
 int32_t Qwen3TTS::params_language_id(const tts_params & params) const {
     std::string lang = params.language.empty() ? "auto" : params.language;
 
@@ -534,7 +546,7 @@ int32_t Qwen3TTS::params_language_id(const tts_params & params) const {
     // for 1.7B so it always gets a language token.
     if (lang == "auto") {
         const std::string & sz = transformer_.get_config().model_size;
-        if (sz == "1b7" || sz == "1.7b") {
+        if (is_model_size_match(sz, "1.7b")) {
             lang = "english";
         }
     }
@@ -921,7 +933,7 @@ tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & par
         // `if self.model.tts_model_size in "0b6": instruct = None`
         std::string sz = get_model_size();
         bool instruct_supported = !(model_type == MODEL_TYPE_CUSTOM_VOICE &&
-                                    (sz == "0.6b" || sz == "0b6"));
+                                    is_model_size_match(sz, "0.6b"));
         if (instruct_supported) {
             return synthesize_internal(text, nullptr, params, result);
         }
