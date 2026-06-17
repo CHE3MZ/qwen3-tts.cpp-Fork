@@ -1,0 +1,123 @@
+username build-ninja % build-ninja/qwen3-tts-cli -m ./models -t "Hello, world!" -o hello.wav
+dquote>  
+username build-ninja % build-ninja/qwen3-tts-cli -m ./models -t Hello, world -o hello.wav 
+zsh: no such file or directory: build-ninja/qwen3-tts-cli
+username build-ninja % ./build-ninja/qwen3-tts-cli -m ./models -t "Hello, world!" -o hello.wav
+dquote>  
+username build-ninja % ./build-ninja/qwen3-tts-cli -m ./models -t Hello, world -o hello.wav 
+zsh: no such file or directory: ./build-ninja/qwen3-tts-cli
+username build-ninja % clear
+username build-ninja % qwen3-tts-cli -m ./models -t "Hello, world!" -o hello.wav
+dquote>  
+username build-ninja % qwen3-tts-cli -m ./models -t Hello, worl" -o hello.wav 
+dquote>  
+username build-ninja % cd ..
+username qwen3-tts-main % build-ninja/qwen3-tts-cli -m ./models -t "Hello, world!" -o hello.wav
+dquote>  
+username qwen3-tts-main % build-ninja/qwen3-tts-cli -m ./models -t "Hello, world -o hello.wav
+dquote>  
+username qwen3-tts-main % ./build-ninja/qwen3-tts-cli -m ./models -t 'hell world' -o hello.wav
+oading models from: ./models
+Loading TTS model: ./models/qwen3-tts-1.7b-q8_0.gguf
+  Text tokenizer loaded: vocab_size=151936
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: loaded in 5.591 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple9  (1009)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 12713.12 MB
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M4
+ggml_metal_init: picking default device: Apple M4
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+ggml_metal_free: deallocating
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M4
+ggml_metal_init: picking default device: Apple M4
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+  TTSTransformer backend: MTL0
+  CoreML code predictor load failed: Model does not exist at models/coreml/code_predictor.mlpackage -- file:///Users/username/Desktop/qwen3-tts-main/
+  Falling back to GGML code predictor
+  Transformer loaded: hidden=2048 layers=28 model_type='base' model_size='1b7'
+Loading vocoder: ./models/qwen3-tts-tokenizer-f16.gguf
+  AudioTokenizerDecoder backend: MTL0
+  Vocoder loaded: sample_rate=24000
+Loading Mimi encoder from ./models/qwen3-tts-tokenizer-f16.gguf...
+  MimiEncoder loaded: enc_tensors=161
+  Mimi encoder loaded (ICL voice cloning enabled)
+Models loaded in 6809 ms
+Synthesizing: "hell world"
+  Language: auto
+  [mem] synth/start              rss=3.66 GB phys=3.68 GB
+  [mem] synth/after-tokenize     rss=3.66 GB phys=3.68 GB
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_get_rows_f16', name = 'kernel_get_rows_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_get_rows_f16                           0x102d112a0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q8_0_f32_r1_3', name = 'kernel_mul_mv_ext_q8_0_f32_r1_3_nsg=2_nxpsg=8'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q8_0_f32_r1_3_nsg=2_nxpsg=8      0x102d11b20 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=1      0x102d123a0 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_silu_f32_4', name = 'kernel_silu_f32_4'
+ggml_metal_library_compile_pipeline: loaded kernel_silu_f32_4                             0x102d12b60 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_q8_0_f32', name = 'kernel_mul_mv_q8_0_f32_nsg=4'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_q8_0_f32_nsg=4                  0xc4f4a8000 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rms_norm_mul_f32_4', name = 'kernel_rms_norm_mul_f32_4'
+ggml_metal_library_compile_pipeline: loaded kernel_rms_norm_mul_f32_4                     0xc4f4a8700 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_q8_0_f32', name = 'kernel_mul_mm_q8_0_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_q8_0_f32_bci=0_bco=1            0xc4f4a8e00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f16', name = 'kernel_cpy_f32_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f16                            0xc4f4a9180 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_rope_neox_f32', name = 'kernel_rope_neox_f32_imrope=0'
+ggml_metal_library_compile_pipeline: loaded kernel_rope_neox_f32_imrope=0                 0xc4f4a9500 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f16_f16', name = 'kernel_cpy_f16_f16'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f16_f16                            0xc4f4a9880 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mm_f16_f32', name = 'kernel_mul_mm_f16_f32_bci=0_bco=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mm_f16_f32_bci=0_bco=1             0xc4f4a9c00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_soft_max_f32', name = 'kernel_soft_max_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_soft_max_f32                           0xc4f4a8380 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_short', name = 'kernel_mul_mv_f16_f32_short_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_short_nsg=1             0xc4f4aa300 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_cpy_f32_f32', name = 'kernel_cpy_f32_f32'
+ggml_metal_library_compile_pipeline: loaded kernel_cpy_f32_f32                            0xc4f4aa680 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=0_nf=1_rb=0      0xc4f4aaa00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=0      0xc4f4aad80 | th_max = 1024 | th_width =   32
+Generating: 1/4096 tokensggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_concat', name = 'kernel_concat'
+ggml_metal_library_compile_pipeline: loaded kernel_concat                                 0xc4f4a8a80 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_q8_0_f32_r1_2', name = 'kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_q8_0_f32_r1_2_nsg=2_nxpsg=16      0xc4f4ab480 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_ext_f32_f32_r1_2', name = 'kernel_mul_mv_ext_f32_f32_r1_2_nsg=2_nxpsg=8'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_ext_f32_f32_r1_2_nsg=2_nxpsg=8      0xc4f4ab800 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f32_f32_short', name = 'kernel_mul_mv_f32_f32_short_nsg=1'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f32_f32_short_nsg=1             0xc4f4a9f80 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_mul_mv_f16_f32_4', name = 'kernel_mul_mv_f16_f32_4_nsg=4'
+ggml_metal_library_compile_pipeline: loaded kernel_mul_mv_f16_f32_4_nsg=4                 0xc4f4f0700 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_pad', name = 'kernel_flash_attn_ext_pad_mask=0_ncpsg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_pad_mask=0_ncpsg=32      0xc4f4f0380 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=1_nwg=32      0xc4f4f0e00 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_reduce', name = 'kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_reduce_dv=128_nwg=32      0xc4f4f1180 | th_max = 1024 | th_width =   32
+ggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_bin_fuse_f32_f32_f32_4', name = 'kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1'
+ggml_metal_library_compile_pipeline: loaded kernel_bin_fuse_f32_f32_f32_4_op=2_nf=1_rb=1      0xc4f4f1500 | th_max = 1024 | th_width =   32
+Generating: 23/4096 tokensggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=1_nwg=32      0xc4f4f0a80 | th_max = 1024 | th_width =   32
+Generating: 2040/4096 tokensggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=2_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=1_ns10=128_ns20=128_nsg=2_nwg=32      0xc4f4f1c00 | th_max = 1024 | th_width =   32
+Generating: 2071/4096 tokensggml_metal_library_compile_pipeline: compiling pipeline: base = 'kernel_flash_attn_ext_vec_f16_dk128_dv128', name = 'kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=2_nwg=32'
+ggml_metal_library_compile_pipeline: loaded kernel_flash_attn_ext_vec_f16_dk128_dv128_mask=0_sink=0_bias=0_scap=0_kvpad=0_ns10=128_ns20=128_nsg=2_nwg=32      0xc4f4f1f80 | th_max = 1024 | th_width =   32
+Generating: 2422/4096 tokens
