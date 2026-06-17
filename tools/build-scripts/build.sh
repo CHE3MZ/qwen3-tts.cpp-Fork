@@ -2,6 +2,10 @@
 # ============================================================
 #  qwen3-tts.cpp — macOS / Linux build script
 #  Usage: ./build.sh [release|debug] [--metal] [--cuda] [--kv-f32]
+#
+#  Ninja is tried automatically — no flag needed.
+#  Falls back silently to the platform default (Make) if Ninja
+#  is not installed or cmake does not support it.
 # ============================================================
 set -euo pipefail
 
@@ -9,7 +13,6 @@ BUILD_TYPE="Release"
 METAL="OFF"
 CUDA="OFF"
 KV_F32="OFF"
-BUILD_DIR="build"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 for arg in "$@"; do
@@ -19,10 +22,20 @@ for arg in "$@"; do
         --metal)         METAL="ON" ;;
         --cuda)          CUDA="ON" ;;
         --kv-f32)        KV_F32="ON" ;;
-        --ninja)         CMAKE_GEN="-G Ninja"; BUILD_DIR="build-ninja" ;;
         *) echo "Unknown argument: $arg" ;;
     esac
 done
+
+# ---- Ninja auto-detect: prefer ninja, fall back silently to Make --------
+CMAKE_GEN=""
+BUILD_DIR="build"
+if command -v ninja &>/dev/null && cmake --help 2>/dev/null | grep -q "Ninja"; then
+    CMAKE_GEN="-G Ninja"
+    BUILD_DIR="build-ninja"
+    echo "[build] Using Ninja generator."
+else
+    echo "[build] Using default generator (Make)."
+fi
 
 # Navigate to repo root (two levels up from tools/build-scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +46,7 @@ echo ""
 echo "============================================================"
 echo " qwen3-tts.cpp build  [$BUILD_TYPE]"
 echo " Metal: $METAL   CUDA: $CUDA   KV_F32: $KV_F32"
-echo " Jobs: $JOBS"
+echo " Generator: ${CMAKE_GEN:-(default)}   Jobs: $JOBS"
 echo " Repo: $REPO_ROOT"
 echo "============================================================"
 echo ""
@@ -53,7 +66,7 @@ GGML_FLAGS="-DGGML_METAL=$METAL -DGGML_CUDA=$CUDA"
 cmake -S ggml -B ggml/build \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     $GGML_FLAGS \
-    ${CMAKE_GEN:-}
+    ${CMAKE_GEN:+"$CMAKE_GEN"}
 cmake --build ggml/build -j "$JOBS"
 echo "      GGML built OK."
 
@@ -63,7 +76,7 @@ echo "[2/3] Configuring qwen3-tts.cpp..."
 cmake -S . -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DQWEN3_TTS_KV_F32="$KV_F32" \
-    ${CMAKE_GEN:-}
+    ${CMAKE_GEN:+"$CMAKE_GEN"}
 
 # ---- Step 3: Build project ---------------------------------------
 echo ""

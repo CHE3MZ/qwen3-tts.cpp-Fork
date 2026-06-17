@@ -56,7 +56,7 @@ fi
 
 # ---- Fall back to pip ------------------------------------------
 # Check if required packages are installed
-if ! "$PYTHON" -c "import huggingface_hub, gguf, torch, safetensors, numpy, tqdm" 2>/dev/null; then
+if ! "$PYTHON" -c "import huggingface_hub, gguf, safetensors, numpy, tqdm" 2>/dev/null; then
     echo "[info] Installing required Python packages..."
     "$PYTHON" -m pip install huggingface_hub gguf torch safetensors numpy tqdm || {
         echo ""

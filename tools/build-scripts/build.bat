@@ -2,14 +2,17 @@
 setlocal EnableDelayedExpansion
 
 REM ============================================================
-REM  qwen3-tts.cpp — Windows build script (Ninja + clang-cl)
+REM  qwen3-tts.cpp — Windows build script
 REM  Usage: build.bat [Release|Debug] [--cuda] [--kv-f32]
+REM
+REM  Ninja is tried automatically — no flag needed.
+REM  Falls back silently to the default CMake generator
+REM  (Visual Studio or NMake) if Ninja is not installed.
 REM ============================================================
 
 set BUILD_TYPE=Release
 set CUDA=OFF
 set KV_F32=OFF
-set BUILD_DIR=build-ninja
 
 REM Parse arguments
 :parse_args
@@ -26,10 +29,29 @@ REM Navigate to repo root (two levels up from tools/build-scripts/)
 cd /d "%~dp0..\.."
 set REPO_ROOT=%CD%
 
+REM ---- Ninja auto-detect: prefer Ninja, fall back silently ----------
+set CMAKE_GEN=
+set BUILD_DIR=build
+where ninja >nul 2>&1
+if not errorlevel 1 (
+    REM ninja binary found — also verify cmake knows about Ninja
+    cmake --help 2>nul | findstr /i "Ninja" >nul 2>&1
+    if not errorlevel 1 (
+        set CMAKE_GEN=-G Ninja
+        set BUILD_DIR=build-ninja
+        echo [build] Using Ninja generator.
+    ) else (
+        echo [build] Ninja found but not supported by this CMake — using default generator.
+    )
+) else (
+    echo [build] Ninja not found — using default generator.
+)
+
 echo.
 echo ============================================================
 echo  qwen3-tts.cpp build  [%BUILD_TYPE%]
 echo  CUDA: %CUDA%   KV_F32: %KV_F32%
+echo  Generator: %CMAKE_GEN%
 echo  Repo: %REPO_ROOT%
 echo ============================================================
 echo.
@@ -39,10 +61,9 @@ echo [1/3] Building GGML...
 set GGML_FLAGS=-DGGML_CUDA=%CUDA%
 if "%CUDA%"=="ON" (
     echo       CUDA enabled. Make sure CUDA toolkit is installed.
-    set GGML_FLAGS=%GGML_FLAGS% -DGGML_CUDA=ON
 )
 
-cmake -S ggml -B ggml\build -G Ninja -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %GGML_FLAGS%
+cmake -S ggml -B ggml\build %CMAKE_GEN% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %GGML_FLAGS%
 if errorlevel 1 ( echo ERROR: GGML CMake configure failed & exit /b 1 )
 
 cmake --build ggml\build -j 4
@@ -53,7 +74,7 @@ REM ---- Step 2: Configure project ------------------------------
 echo.
 echo [2/3] Configuring qwen3-tts.cpp...
 set PROJECT_FLAGS=-DQWEN3_TTS_KV_F32=%KV_F32%
-cmake -S . -B %BUILD_DIR% -G Ninja -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %PROJECT_FLAGS%
+cmake -S . -B %BUILD_DIR% %CMAKE_GEN% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %PROJECT_FLAGS%
 if errorlevel 1 ( echo ERROR: Project CMake configure failed & exit /b 1 )
 
 REM ---- Step 3: Build project ----------------------------------
