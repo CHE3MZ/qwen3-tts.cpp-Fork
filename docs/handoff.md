@@ -1,8 +1,19 @@
 # Handoff: TTS port — complete and production-ready
-<!-- Last updated: 2026-06-17 -->
+<!-- Last updated: 2026-06-17 (Q2_K/Q3_K support) -->
 
 ## Summary
-`qwen3-tts.cpp-Fork` is a complete, production-ready C++17/GGML TTS engine. All major features are implemented, tested, and clean. This session added batch inference, GGML optimizations from reference libraries, extended sampling, flash attention on decode path, KV cache crash fix for long texts, CLI rewrite, resample utility, and repo cleanup. All tests pass.
+`qwen3-tts.cpp-Fork` is a complete, production-ready C++17/GGML TTS engine. All major features are implemented, tested, and clean. This session added Q2_K/Q3_K quantization support end-to-end and performed a full cleanup cycle:
+
+**Q2_K/Q3_K:** converter, model file auto-discovery, setup wizard, and C++ inference path (all 4 `ffn_down` matmul sites now conditionally cast only for F16, K-quant types use GGML native kernels).
+
+**Cleanup cycle:**
+- `audio_tokenizer_decoder.cpp` — removed 11 dead duplicate pre_tfm MATCH1 assignments (unreachable — pre_tfm tensors are routed by the earlier `sname.find()` branch)
+- `audio_tokenizer_decoder.cpp/.h` — removed unused `block_idx` params from `apply_upsample_block` and `apply_decoder_block`
+- `tts_transformer.cpp` — extracted `coreml_env_disabled()` and `coreml_model_path()` helpers; eliminated copy-paste of CoreML env-var parsing logic between `load_model()` and `try_init_coreml_code_predictor()`
+- `qwen3tts_c_api.cpp/.h` — fixed use-after-free of error message in `qwen3_tts_create` failure path; added `qwen3_tts_get_last_create_error()` function + declaration; fixed stale header comment referencing nonexistent `qwen3_tts_last_error()`
+- `audio_tokenizer_encoder.cpp` — added `GGML_ASSERT` guard to `apply_reflect_pad_1d` for `pad > 16`; added O(N²) comment to `compute_dft` explaining why it is acceptable at current n_fft sizes
+
+Previous sessions added batch inference, GGML optimizations, extended sampling, flash attention, KV cache crash fix, CLI rewrite, resample utility, and repo cleanup. All tests pass.
 
 ## Objective
 No active objective. Optional next work: flash attn prefill investigation, streaming TTS, Go integration test, or begin `qwen3-asr.cpp-Fork` using `../how-i-did-it.md`.
@@ -12,7 +23,7 @@ No active objective. Optional next work: flash attn prefill investigation, strea
 ### Core pipeline
 * Full 4-stage pipeline: BPE tokenizer → ECAPA-TDNN speaker encoder → 28L Qwen2 talker + 5L×15-step code predictor → WavTokenizer vocoder
 * All 3 model types: base, custom_voice, voice_design
-* Both 0.6B and 1.7B; all quantization: F16, Q8_0, Q5_K, Q6_K, Q4_K
+* Both 0.6B and 1.7B; all quantization: F16, Q8_0, Q5_K, Q6_K, Q4_K, Q3_K, Q2_K
 * ICL voice cloning via Mimi encoder (100% exact on F32)
 * Streaming + non-streaming prefill modes
 

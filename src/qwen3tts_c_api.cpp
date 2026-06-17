@@ -161,19 +161,28 @@ void qwen3_tts_default_params(Qwen3TtsParams * p) {
     std::strncpy(p->language_name, "auto", sizeof(p->language_name) - 1);
 }
 
+// Thread-local storage for the last qwen3_tts_create() error message.
+// Since the handle is deleted on failure, callers cannot retrieve the error
+// via qwen3_tts_get_error(). Use qwen3_tts_get_last_create_error() instead.
+static thread_local std::string s_last_create_error;
+
 // ---- lifecycle --------------------------------------------------------------
 
 Qwen3Tts * qwen3_tts_create(const char * model_dir, int32_t n_threads) {
-    if (!model_dir) return nullptr;
+    if (!model_dir) {
+        s_last_create_error = "model_dir is NULL";
+        return nullptr;
+    }
     auto * tts = new Qwen3Tts;
     // Store the requested thread count so all subsequent synthesize calls use it
     // unless the caller overrides via params.n_threads.
     tts->default_n_threads = (n_threads > 0) ? n_threads : 0;
     if (!tts->engine.load_models(model_dir)) {
-        tts->last_error = tts->engine.get_error();
+        s_last_create_error = tts->engine.get_error();
         delete tts;
         return nullptr;
     }
+    s_last_create_error.clear();
     return tts;
 }
 
@@ -202,6 +211,10 @@ void qwen3_tts_destroy(Qwen3Tts * tts) { delete tts; }
 
 const char * qwen3_tts_get_error(const Qwen3Tts * tts) {
     return tts ? tts->last_error.c_str() : "";
+}
+
+const char * qwen3_tts_get_last_create_error(void) {
+    return s_last_create_error.c_str();
 }
 
 int32_t qwen3_tts_sample_rate(const Qwen3Tts * /*tts*/) { return 24000; }

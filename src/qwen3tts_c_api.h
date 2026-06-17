@@ -157,7 +157,8 @@ void qwen3_tts_default_params(Qwen3TtsParams * params);
 
 /* Create engine, load models from directory.
  * n_threads: number of CPU threads (0 = auto).
- * Returns NULL on failure — check qwen3_tts_last_error() for details.  */
+ * Returns NULL on failure — call qwen3_tts_get_last_create_error() to get
+ * the error string (the handle is gone so qwen3_tts_get_error() is unavailable). */
 Qwen3Tts * qwen3_tts_create(const char * model_dir, int32_t n_threads);
 
 /* Same as create but also loads generation_config.json if present.     */
@@ -175,8 +176,13 @@ void qwen3_tts_unload(Qwen3Tts * tts);
 /* Fully destroy engine and free all resources. */
 void qwen3_tts_destroy(Qwen3Tts * tts);
 
-/* Get last error message (valid until next API call on this handle).    */
+/* Get last error message for a live handle (valid until next API call). */
 const char * qwen3_tts_get_error(const Qwen3Tts * tts);
+
+/* Get the error from the most recent failed qwen3_tts_create() call.
+ * Thread-local: safe to call from any thread that called qwen3_tts_create().
+ * Returns "" if the last create succeeded.                              */
+const char * qwen3_tts_get_last_create_error(void);
 
 /* Get output sample rate (always 24000 Hz). */
 int32_t qwen3_tts_sample_rate(const Qwen3Tts * tts);

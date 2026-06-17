@@ -94,6 +94,11 @@ static void compute_mel_filterbank_slaney(float * filterbank, int n_mels, int n_
     }
 }
 
+// DFT — O(N²) naive implementation used for the STFT mel computation.
+// This is intentionally kept simple: the speaker encoder runs once per
+// voice-clone call (not per frame) and n_fft=400 (win_length), so the
+// total cost is n_frames * 400² ≈ ~3M muls for a 3-second clip.
+// If the encoder becomes a bottleneck a proper FFT can be dropped in here.
 static void compute_dft(const float * input, float * real, float * imag, int n) {
     for (int k = 0; k < n; ++k) {
         real[k] = 0.0f;
@@ -381,7 +386,12 @@ static struct ggml_tensor * apply_reflect_pad_1d(struct ggml_context * ctx,
     if (pad == 0) {
         return x;
     }
-    
+
+    // Hard limit: the fixed-size slice arrays below hold at most 16 entries.
+    // All callers in this file use pad <= 4, so this assert is a safety net
+    // against accidental misuse when the encoder config changes.
+    GGML_ASSERT(pad <= 16 && "apply_reflect_pad_1d: pad > 16 not supported");
+
     int64_t T = x->ne[0];
     int64_t C = x->ne[1];
     int64_t B = x->ne[2];

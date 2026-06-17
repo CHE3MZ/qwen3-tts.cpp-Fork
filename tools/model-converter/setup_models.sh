@@ -41,12 +41,17 @@ fi
 echo "Using: $($PYTHON --version)"
 echo ""
 
-# ---- Use uv if available (preferred) ---------------------------
+# ---- Use uv if available AND a .venv exists (project isolation) -----
 if command -v uv &>/dev/null; then
-    echo "[info] uv detected — using uv run for dependency management."
-    echo ""
-    uv run "$REPO_ROOT/tools/model-converter/setup_models.py" "$@"
-    exit $?
+    if [ -f "$REPO_ROOT/.venv/bin/python" ] || [ -f "$REPO_ROOT/.venv/Scripts/python.exe" ]; then
+        echo "[info] Using existing .venv via uv."
+        uv run "$REPO_ROOT/tools/model-converter/setup_models.py" "$@"
+        exit $?
+    else
+        echo "[info] uv found but no project .venv — using system Python."
+        echo "       To use uv isolation: uv venv .venv && uv pip install huggingface_hub gguf torch safetensors numpy tqdm"
+        echo ""
+    fi
 fi
 
 # ---- Fall back to pip ------------------------------------------

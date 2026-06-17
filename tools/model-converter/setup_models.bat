@@ -45,25 +45,35 @@ echo.
 REM Check for uv (faster pip alternative)
 where uv >nul 2>&1
 if not errorlevel 1 (
-    echo [info] uv detected — using uv run for dependency management.
-    echo.
-    uv run "%REPO_ROOT%\tools\model-converter\setup_models.py" %*
-) else (
-    REM Check required packages
-    "%PYTHON%" -c "import huggingface_hub, gguf, torch, safetensors, numpy, tqdm" >nul 2>&1
-    if errorlevel 1 (
-        echo [info] Installing required Python packages...
-        "%PYTHON%" -m pip install huggingface_hub gguf torch safetensors numpy tqdm
-        if errorlevel 1 (
-            echo [error] Failed to install packages. Try:
-            echo   pip install huggingface_hub gguf torch safetensors numpy tqdm
-            pause
-            exit /b 1
-        )
+    REM uv creates isolated environments by default — check if packages
+    REM are in the system Python first, and only use uv if a project
+    REM venv already exists (so it picks up the right interpreter).
+    if exist "%REPO_ROOT%\.venv\Scripts\python.exe" (
+        echo [info] Using existing .venv via uv.
+        uv run "%REPO_ROOT%\tools\model-converter\setup_models.py" %*
+        goto :check_result
     )
-    "%PYTHON%" "%REPO_ROOT%\tools\model-converter\setup_models.py" %*
+    REM No .venv — use system Python directly (packages are system-installed)
+    echo [info] uv found but no project .venv detected.
+    echo        Using system Python to preserve installed packages.
+    echo        To use uv isolation: run 'uv venv .venv ^&^& uv pip install huggingface_hub gguf torch safetensors numpy tqdm' first.
+    echo.
 )
+    REM Use system Python directly
+"%PYTHON%" -c "import huggingface_hub, gguf, safetensors, numpy, tqdm" >nul 2>&1
+if errorlevel 1 (
+    echo [info] Installing required Python packages...
+    "%PYTHON%" -m pip install huggingface_hub gguf torch safetensors numpy tqdm
+    if errorlevel 1 (
+        echo [error] Failed to install packages. Try:
+        echo   pip install huggingface_hub gguf torch safetensors numpy tqdm
+        pause
+        exit /b 1
+    )
+)
+"%PYTHON%" "%REPO_ROOT%\tools\model-converter\setup_models.py" %*
 
+:check_result
 if errorlevel 1 (
     echo.
     echo [error] Setup failed. Check the output above for details.

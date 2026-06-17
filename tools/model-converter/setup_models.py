@@ -35,21 +35,24 @@ MODELS_DIR  = REPO_ROOT / "models"
 # ---- Available model configurations -----------------------------
 MODEL_VARIANTS = {
     "base": {
-        "label": "Base (voice cloning from reference audio)",
+        "label": "Base — Voice Cloning (clone any voice from a reference WAV)",
+        "recommended": True,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
         "local_0.6b": "Qwen3-TTS-12Hz-0.6B-Base",
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-Base",
     },
     "custom_voice": {
-        "label": "CustomVoice (named speaker selection)",
+        "label": "CustomVoice — Named Speakers (pick from built-in voices: Vivian, Ryan, etc.)",
+        "recommended": False,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
         "local_0.6b": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
     },
     "voice_design": {
-        "label": "VoiceDesign (describe a voice in natural language)",
+        "label": "VoiceDesign — Describe a voice in natural language",
+        "recommended": False,
         "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
         "local_0.6b": "Qwen3-TTS-12Hz-0.6B-VoiceDesign",
@@ -61,11 +64,13 @@ TOKENIZER_REPO    = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 TOKENIZER_LOCAL   = "Qwen3-TTS-Tokenizer-12Hz"
 
 QUANT_OPTIONS = {
-    "f16":   "F16  — Full precision (~1.75 GB for 0.6B). Best quality, largest file.",
-    "q8_0":  "Q8_0 — 8-bit quantized (~1.0 GB for 0.6B). Virtually lossless quality.",
-    "q6_k":  "Q6_K — 6-bit K-quant (~0.75 GB for 0.6B). Excellent quality. Recommended.",
-    "q5_k":  "Q5_K — 5-bit K-quant (~0.65 GB for 0.6B). Very good quality.",
-    "q4_k":  "Q4_K — 4-bit K-quant (~0.55 GB for 0.6B). Good quality, smallest file.",
+    "f16":   "F16   — Full precision (~1.75 GB / 0.6B). Best quality, largest file.",
+    "q8_0":  "Q8_0  — 8-bit quantized (~1.0 GB / 0.6B). Virtually lossless quality.",
+    "q6_k":  "Q6_K  — 6-bit K-quant (~0.75 GB / 0.6B). Excellent quality. [Recommended]",
+    "q5_k":  "Q5_K  — 5-bit K-quant (~0.65 GB / 0.6B). Very good quality.",
+    "q4_k":  "Q4_K  — 4-bit K-quant (~0.55 GB / 0.6B). Good quality, smallest practical size.",
+    "q3_k":  "Q3_K  — 3-bit K-quant (~0.42 GB / 0.6B). [Not recommended — audible artifacts]",
+    "q2_k":  "Q2_K  — 2-bit K-quant (~0.33 GB / 0.6B). [Not recommended — significant quality loss]",
 }
 
 MIMI_QUANT_OPTIONS = {
@@ -148,11 +153,16 @@ def check_python_deps() -> None:
         if not importlib.util.find_spec(mod):
             missing.append(pkg)
     if missing:
-        print("\n[warn] Missing Python packages:")
+        print("\n[warn] Packages not found in this Python interpreter:")
+        print(f"       Python: {sys.executable}")
         for p in missing:
             print(f"  - {p}")
-        print(f"\nInstall with:\n  {sys.executable} -m pip install {' '.join(missing)}\n")
-        if not ask_yes_no("Continue anyway (may fail during download/convert)?", default=False):
+        print()
+        print("If your packages are in a different Python, run the wizard directly:")
+        print("  C:\\Python314\\python.exe tools/model-converter/setup_models.py")
+        print(f"Or install missing: {sys.executable} -m pip install " + " ".join(missing))
+        print()
+        if not ask_yes_no("Continue anyway (will fail if packages are truly missing)?", default=False):
             sys.exit(1)
 
 def output_filename(variant: str, size: str, quant: str) -> str:
@@ -183,15 +193,20 @@ All models output 24 kHz mono audio.
     # ---- Step 1: Model variant -----------------------------------
     step(1, TOTAL_STEPS, "Choose model variant")
     print("""
-  Base          — Voice cloning from a reference WAV file.
-                  Best for: cloning any voice you have audio for.
+  Base          — VOICE CLONING. Clone any voice from a short reference WAV file.
+                  Give it 3-30 seconds of someone speaking and it copies their voice.
+                  Best for: cloning your own voice, a celebrity, or any audio sample.
+                  [Recommended for most users]
 
-  CustomVoice   — Pick from named built-in speakers (e.g. Vivian, Ryan).
-                  Best for: consistent named voices without reference audio.
+  CustomVoice   — NAMED SPEAKERS. Pick from ~30 built-in voice presets by name
+                  (e.g. Vivian, Ryan, Emma). No reference audio needed.
+                  Best for: consistent branded voices without needing reference audio.
+                  NOT the same as voice cloning — these are fixed pre-baked voices.
 
-  VoiceDesign   — Describe a voice in natural language.
-                  Best for: generating novel voices from text description.
-                  Note: instruct requires 1.7B model (0.6B doesn't support it).
+  VoiceDesign   — VOICE DESCRIPTION. Describe a voice in natural language:
+                  e.g. "Calm, warm female voice with a slight British accent".
+                  Best for: creating novel voices when you don't have reference audio.
+                  Note: instruct mode requires 1.7B model (0.6B ignores the description).
 """)
     variant_keys = list(MODEL_VARIANTS.keys())
     if non_interactive:

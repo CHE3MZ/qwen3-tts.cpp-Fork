@@ -204,8 +204,7 @@ private:
     // Apply upsample block (ConvNeXt-style)
     struct ggml_tensor * apply_upsample_block(struct ggml_context * ctx,
                                                struct ggml_tensor * x,
-                                               const upsample_block & block,
-                                               int block_idx);
+                                               const upsample_block & block);
     
     // Apply residual block
     struct ggml_tensor * apply_residual_block(struct ggml_context * ctx,
@@ -216,8 +215,7 @@ private:
     struct ggml_tensor * apply_decoder_block(struct ggml_context * ctx,
                                               struct ggml_tensor * x,
                                               const decoder_block & block,
-                                              int upsample_rate,
-                                              int block_idx);
+                                              int upsample_rate);
     
     void normalize_codebooks();
     

@@ -224,40 +224,9 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
             else if (MATCH1("tok_dec.upsample.%d.gamma", blk_idx)) {
                 if (blk_idx >= 0 && blk_idx < 2) model_.upsample[blk_idx].gamma = tensor;
             }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_norm.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_norm_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_q.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_q_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_k.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_k_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_v.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_v_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_output.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_output_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.attn_scale", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].attn_scale = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.ffn_norm.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].ffn_norm_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.ffn_gate.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].ffn_gate_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.ffn_up.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].ffn_up_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.ffn_down.weight", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].ffn_down_w = tensor;
-            }
-            else if (MATCH1("tok_dec.pre_tfm.blk.%d.ffn_scale", blk_idx)) {
-                if (blk_idx >= 0 && blk_idx < 8) model_.pre_tfm_layers[blk_idx].ffn_scale = tensor;
-            }
-            else if (MATCH1("tok_dec.dec.%d.snake.alpha", blk_idx)) {
+            // pre_tfm.blk.* tensors are routed above via the sname.find("pre_tfm.blk.") branch
+            // and never reach this else-block — no duplicate assignments needed here.
+            if (MATCH1("tok_dec.dec.%d.snake.alpha", blk_idx)) {
                 if (blk_idx >= 1 && blk_idx <= 4) model_.dec_blocks[blk_idx-1].snake_alpha = tensor;
             }
             else if (MATCH1("tok_dec.dec.%d.snake.beta", blk_idx)) {
@@ -489,8 +458,7 @@ struct ggml_tensor * AudioTokenizerDecoder::apply_pre_tfm_layer(struct ggml_cont
 
 struct ggml_tensor * AudioTokenizerDecoder::apply_upsample_block(struct ggml_context * ctx,
                                                                    struct ggml_tensor * x,
-                                                                   const upsample_block & block,
-                                                                   int block_idx) {
+                                                                   const upsample_block & block) {
     int64_t seq_len = x->ne[0];
     int64_t channels = x->ne[1];
     
@@ -581,8 +549,7 @@ struct ggml_tensor * AudioTokenizerDecoder::apply_residual_block(struct ggml_con
 struct ggml_tensor * AudioTokenizerDecoder::apply_decoder_block(struct ggml_context * ctx,
                                                                   struct ggml_tensor * x,
                                                                   const decoder_block & block,
-                                                                  int upsample_rate,
-                                                                  int block_idx) {
+                                                                  int upsample_rate) {
     if (block.snake_alpha && block.snake_beta) {
         x = apply_snake(ctx, x, block.snake_alpha, block.snake_beta);
     }
@@ -750,7 +717,7 @@ struct ggml_cgraph * AudioTokenizerDecoder::build_graph(int32_t n_frames) {
      ggml_set_name(cur, "pre_tfm_reshaped");
     
      for (int i = 0; i < 2; ++i) {
-         cur = apply_upsample_block(ctx0, cur, model_.upsample[i], i);
+         cur = apply_upsample_block(ctx0, cur, model_.upsample[i]);
      }
      
      ggml_set_name(cur, "upsample_output");
@@ -766,7 +733,7 @@ struct ggml_cgraph * AudioTokenizerDecoder::build_graph(int32_t n_frames) {
      
      int upsample_rates[4] = {8, 5, 4, 3};
      for (int i = 0; i < 4; ++i) {
-         cur = apply_decoder_block(ctx0, cur, model_.dec_blocks[i], upsample_rates[i], i);
+         cur = apply_decoder_block(ctx0, cur, model_.dec_blocks[i], upsample_rates[i]);
          char name[32];
          snprintf(name, sizeof(name), "dec%d_output", i + 1);
          ggml_set_name(cur, name);

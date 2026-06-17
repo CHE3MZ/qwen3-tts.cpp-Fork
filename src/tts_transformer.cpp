@@ -64,39 +64,45 @@ void TTSTransformer::unload_model() {
     embd_row_fp16_scratch_.clear();
 }
 
+// Parse QWEN3_TTS_USE_COREML env var: returns true if CoreML is explicitly disabled.
+// "0", "false", "off", "no" (case-insensitive) → disabled.  Empty / unset → not disabled.
+static bool coreml_env_disabled() {
+    const char * val = std::getenv("QWEN3_TTS_USE_COREML");
+    if (!val || val[0] == '\0') return false;
+    std::string s = val;
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    return s == "0" || s == "false" || s == "off" || s == "no";
+}
+
+// Resolve the CoreML model path: QWEN3_TTS_COREML_MODEL env override, or
+// <model_dir>/coreml/code_predictor.mlpackage next to the GGUF file.
+static std::string coreml_model_path(const std::string & model_path) {
+    const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
+    if (override_env && override_env[0] != '\0') return override_env;
+    size_t slash = model_path.find_last_of("/\\");
+    const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
+    return model_dir + "/coreml/code_predictor.mlpackage";
+}
+
 bool TTSTransformer::load_model(const std::string & model_path) {
     unload_model();
 
     skip_ggml_code_pred_layers_ = false;
 #if defined(__APPLE__)
-    const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
-    bool coreml_disabled = false;
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        std::string use_coreml = use_coreml_env;
-        std::transform(use_coreml.begin(), use_coreml.end(), use_coreml.begin(),
-                       [](unsigned char c) { return (char) std::tolower(c); });
-        coreml_disabled = use_coreml == "0" || use_coreml == "false" ||
-                          use_coreml == "off" || use_coreml == "no";
-    }
-
-    if (!coreml_disabled) {
-        std::string coreml_path;
-        const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
-        if (override_env && override_env[0] != '\0') {
-            coreml_path = override_env;
-        } else {
-            size_t slash = model_path.find_last_of("/\\");
-            const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
-            coreml_path = model_dir + "/coreml/code_predictor.mlpackage";
-        }
-
+    if (!coreml_env_disabled()) {
+        const std::string coreml_path = coreml_model_path(model_path);
         struct stat st = {};
         if (stat(coreml_path.c_str(), &st) == 0) {
-            // Skip GGML code-predictor weights when CoreML package is present.
+            // CoreML package found next to the model — skip GGML code-predictor weights.
             skip_ggml_code_pred_layers_ = true;
-        } else if (use_coreml_env && use_coreml_env[0] != '\0') {
-            // Explicit opt-in should remain strict to surface configuration errors.
-            skip_ggml_code_pred_layers_ = true;
+        } else {
+            // Explicit opt-in (env set but file not found yet) — keep strict mode
+            // so the error surfaces at try_init_coreml_code_predictor time.
+            const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
+            if (use_coreml_env && use_coreml_env[0] != '\0') {
+                skip_ggml_code_pred_layers_ = true;
+            }
         }
     }
 #endif
@@ -183,35 +189,20 @@ bool TTSTransformer::try_init_coreml_code_predictor(const std::string & model_pa
     use_coreml_code_predictor_ = false;
     coreml_code_predictor_path_.clear();
 
-    const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
-    bool coreml_disabled = false;
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        std::string use_coreml = use_coreml_env;
-        std::transform(use_coreml.begin(), use_coreml.end(), use_coreml.begin(),
-                       [](unsigned char c) { return (char) std::tolower(c); });
-        coreml_disabled = use_coreml == "0" || use_coreml == "false" ||
-                          use_coreml == "off" || use_coreml == "no";
-    }
-
-    if (coreml_disabled) {
+    if (coreml_env_disabled()) {
         return true;
     }
 
 #if !defined(__APPLE__)
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        fprintf(stderr, "  CoreML code predictor requested but this build is not on Apple platform\n");
+    {
+        const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
+        if (use_coreml_env && use_coreml_env[0] != '\0') {
+            fprintf(stderr, "  CoreML code predictor requested but this build is not on Apple platform\n");
+        }
     }
     return true;
 #else
-    std::string coreml_path;
-    const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
-    if (override_env && override_env[0] != '\0') {
-        coreml_path = override_env;
-    } else {
-        size_t slash = model_path.find_last_of("/\\");
-        const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
-        coreml_path = model_dir + "/coreml/code_predictor.mlpackage";
-    }
+    const std::string coreml_path = coreml_model_path(model_path);
 
     if (!coreml_code_predictor_.load(coreml_path, model_.config.n_codebooks - 1)) {
         if (skip_ggml_code_pred_layers_) {
@@ -1517,8 +1508,13 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        // F16 weights need an explicit cast to F32 before mul_mat on CPU.
+        // K-quant types (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_0) are handled
+        // natively by ggml_mul_mat — casting them wastes memory and time.
+        struct ggml_tensor * ffn_down_w = (layer.ffn_down->type == GGML_TYPE_F16)
+            ? ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32)
+            : layer.ffn_down;
+        cur = ggml_mul_mat(ctx0, ffn_down_w, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1663,8 +1659,13 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past, int32_t ba
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        // F16 weights need an explicit cast to F32 before mul_mat on CPU.
+        // K-quant types (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_0) are handled
+        // natively by ggml_mul_mat — casting them wastes memory and time.
+        struct ggml_tensor * ffn_down_w = (layer.ffn_down->type == GGML_TYPE_F16)
+            ? ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32)
+            : layer.ffn_down;
+        cur = ggml_mul_mat(ctx0, ffn_down_w, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1809,8 +1810,10 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph(int32_t batch
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        struct ggml_tensor * ffn_down_w = (layer.ffn_down->type == GGML_TYPE_F16)
+            ? ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32)
+            : layer.ffn_down;
+        cur = ggml_mul_mat(ctx0, ffn_down_w, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1966,8 +1969,13 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * step_ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, step_ffn_down_f32, cur);
+        // F16 weights need an explicit cast to F32 before mul_mat on CPU.
+        // K-quant types (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_0) are handled
+        // natively by ggml_mul_mat — casting them wastes memory and time.
+        struct ggml_tensor * ffn_down_w = (layer.ffn_down->type == GGML_TYPE_F16)
+            ? ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32)
+            : layer.ffn_down;
+        cur = ggml_mul_mat(ctx0, ffn_down_w, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }

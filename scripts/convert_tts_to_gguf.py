@@ -362,6 +362,30 @@ class Qwen3TTSConverter:
             except Exception as e:
                 logger.warning(f"Q6_K quantization failed for {tensor_name}: {e}, falling back to F16")
                 return data.astype(np.float16), gguf.GGMLQuantizationType.F16
+        elif self.output_type == "q3_k":
+            if not self._should_quantize(tensor_name):
+                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
+                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
+
+            data = data.astype(np.float32)
+            try:
+                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q3_K)
+                return quantized, gguf.GGMLQuantizationType.Q3_K
+            except Exception as e:
+                logger.warning(f"Q3_K quantization failed for {tensor_name}: {e}, falling back to F16")
+                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
+        elif self.output_type == "q2_k":
+            if not self._should_quantize(tensor_name):
+                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
+                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
+
+            data = data.astype(np.float32)
+            try:
+                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q2_K)
+                return quantized, gguf.GGMLQuantizationType.Q2_K
+            except Exception as e:
+                logger.warning(f"Q2_K quantization failed for {tensor_name}: {e}, falling back to F16")
+                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
         else:
             return data.astype(np.float16), gguf.GGMLQuantizationType.F16
 
@@ -481,6 +505,10 @@ class Qwen3TTSConverter:
             ftype = gguf.LlamaFileType.MOSTLY_Q5_K_M
         elif self.output_type == "q6_k":
             ftype = gguf.LlamaFileType.MOSTLY_Q6_K
+        elif self.output_type == "q3_k":
+            ftype = gguf.LlamaFileType.MOSTLY_Q3_K_M
+        elif self.output_type == "q2_k":
+            ftype = gguf.LlamaFileType.MOSTLY_Q2_K
         else:
             ftype = gguf.LlamaFileType.MOSTLY_F16
         writer.add_file_type(ftype)
@@ -636,7 +664,7 @@ def main():
     )
     parser.add_argument(
         "--type", "-t",
-        choices=["f16", "f32", "q8_0", "q4_k", "q5_k", "q6_k"],
+        choices=["f16", "f32", "q8_0", "q4_k", "q5_k", "q6_k", "q3_k", "q2_k"],
         default="f16",
         help=(
             "Output data type (default: f16).\n"
@@ -644,6 +672,8 @@ def main():
             "  q6_k  ~57%% size reduction, excellent quality (recommended max quant)\n"
             "  q5_k  ~64%% size reduction, very good quality\n"
             "  q4_k  ~70%% size reduction, good quality\n"
+            "  q3_k  ~76%% size reduction, NOT recommended for TTS (audible artifacts)\n"
+            "  q2_k  ~81%% size reduction, NOT recommended for TTS (significant quality loss)\n"
             "Embeddings, norms, biases, and LM heads are always kept in F16."
         )
     )
