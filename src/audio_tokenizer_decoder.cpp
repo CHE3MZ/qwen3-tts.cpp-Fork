@@ -774,13 +774,6 @@ bool AudioTokenizerDecoder::decode(const int32_t * codes, int32_t n_frames,
     
     const auto & cfg = model_.config;
     
-    codes_buf_.resize(n_frames * cfg.n_codebooks);
-    for (int f = 0; f < n_frames; ++f) {
-        for (int cb = 0; cb < cfg.n_codebooks; ++cb) {
-            codes_buf_[cb + f * cfg.n_codebooks] = codes[f * cfg.n_codebooks + cb];
-        }
-    }
-    
     struct ggml_cgraph * gf = build_graph(n_frames);
     
     if (!ggml_backend_sched_alloc_graph(state_.sched, gf)) {
@@ -800,7 +793,7 @@ bool AudioTokenizerDecoder::decode(const int32_t * codes, int32_t n_frames,
         }
         
         for (int f = 0; f < n_frames; ++f) {
-            cb_codes[f] = codes_buf_[f * cfg.n_codebooks + cb];
+            cb_codes[f] = codes[f * cfg.n_codebooks + cb];
         }
         
         ggml_backend_tensor_set(cb_tensor, cb_codes.data(), 0, n_frames * sizeof(int32_t));
