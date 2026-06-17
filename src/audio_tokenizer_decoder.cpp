@@ -561,14 +561,14 @@ struct ggml_tensor * AudioTokenizerDecoder::apply_decoder_block(struct ggml_cont
      int64_t new_seq_len = x_2d->ne[0];
      x = ggml_reshape_3d(ctx, x_2d, new_seq_len, out_channels, 1);
      
-     // Python CausalTransConvNet: left_pad = right_pad = kernel_size - stride
-     int pad = kernel_size - upsample_rate;
-     int left_pad = pad;
-     int right_pad = pad;
-     int64_t out_seq_len = new_seq_len - left_pad - right_pad;
-     
-     x = ggml_view_3d(ctx, x, out_seq_len, out_channels, 1,
-                      x->nb[1], x->nb[2], left_pad * x->nb[0]);
+      // Python CausalTransConvNet: only strips right_pad = kernel_size - stride
+      int pad = kernel_size - upsample_rate;
+      int left_pad = 0;
+      int right_pad = pad;
+      int64_t out_seq_len = new_seq_len - right_pad;
+      
+      x = ggml_view_3d(ctx, x, out_seq_len, out_channels, 1,
+                       x->nb[1], x->nb[2], 0);
      x = ggml_cont(ctx, x);
      
      if (block.conv_t_b) {

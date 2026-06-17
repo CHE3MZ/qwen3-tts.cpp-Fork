@@ -308,8 +308,7 @@ bool AudioTokenizerEncoder::compute_mel_spectrogram(const float * samples, int32
     for (int i = 0; i < padded_length; ++i) {
         int src_idx;
         if (i < padding) {
-            // Reflect left: padding-1, padding-2, ..., 0 -> samples[padding-i], samples[padding-1-i], ...
-            src_idx = padding - i;
+            src_idx = padding - 1 - i;
         } else if (i >= padding + n_samples) {
             // Reflect right
             src_idx = 2 * n_samples - (i - padding) - 2;
