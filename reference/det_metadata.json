@@ -1,6 +1,6 @@
 {
-  "model_path": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\models\\Qwen3-TTS-12Hz-0.6B-Base",
-  "reference_audio": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\clone.wav",
+  "model_path": "<redacted>",
+  "reference_audio": "<redacted>",
   "reference_text": "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.",
   "synthesis_text": "Hello.",
   "language": "English",
