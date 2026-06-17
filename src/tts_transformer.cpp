@@ -187,26 +187,44 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     // uses each kernel variant. If this happens during the first real synthesis
     // it interleaves compilation with inference, causing corrupted sampler outputs
     // for early frames and preventing EOS from being sampled cleanly.
-    // Fix: run one dummy step graph at load time so all needed kernels are
-    // compiled and cached before any synthesis begins.
+    // Fix: run dummy prefill + step graphs at load time so ALL kernel variants
+    // used during inference are compiled and cached before synthesis begins.
 #if defined(__APPLE__)
     {
         ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
         if (dev && ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU) {
             fprintf(stderr, "  Warming up Metal shader cache...\n");
-            // Allocate a minimal KV cache (1 slot) so build_step_graph doesn't crash,
-            // run one dummy decode step to force Metal shader compilation, then free.
-            if (init_kv_cache(1, 1) && init_code_pred_kv_cache(2, 1)) {
-                struct ggml_cgraph * warmup_gf = build_step_graph(0, 0);
-                if (warmup_gf && ggml_backend_sched_alloc_graph(state_.sched, warmup_gf)) {
-                    struct ggml_tensor * inp_embd = ggml_graph_get_tensor(warmup_gf, "inp_step_embd");
-                    struct ggml_tensor * inp_pos  = ggml_graph_get_tensor(warmup_gf, "inp_pos");
-                    if (inp_embd) ggml_backend_tensor_memset(inp_embd, 0, 0, ggml_nbytes(inp_embd));
-                    if (inp_pos)  ggml_backend_tensor_memset(inp_pos,  0, 0, ggml_nbytes(inp_pos));
-                    ggml_backend_sched_graph_compute(state_.sched, warmup_gf);
-                    ggml_backend_sched_reset(state_.sched);
+
+            // Allocate minimal KV caches so graph builders have valid tensors
+            if (init_kv_cache(4, 1) && init_code_pred_kv_cache(4, 1)) {
+
+                // 1. Warm up prefill graph (uses mul_mm, get_rows, soft_max, concat...)
+                {
+                    struct ggml_cgraph * gf = build_prefill_forward_graph(1, 0, 0);
+                    if (gf && ggml_backend_sched_alloc_graph(state_.sched, gf)) {
+                        struct ggml_tensor * t = ggml_graph_get_tensor(gf, "inp_prefill_embd");
+                        struct ggml_tensor * p = ggml_graph_get_tensor(gf, "inp_pos");
+                        if (t) ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
+                        if (p) ggml_backend_tensor_memset(p, 0, 0, ggml_nbytes(p));
+                        ggml_backend_sched_graph_compute(state_.sched, gf);
+                        ggml_backend_sched_reset(state_.sched);
+                    }
                 }
-                // Free the temporary KV cache — synthesis will re-init with proper size
+
+                // 2. Warm up decode step graph (uses mul_mv, flash_attn_ext_vec...)
+                {
+                    struct ggml_cgraph * gf = build_step_graph(1, 0);
+                    if (gf && ggml_backend_sched_alloc_graph(state_.sched, gf)) {
+                        struct ggml_tensor * t = ggml_graph_get_tensor(gf, "inp_step_embd");
+                        struct ggml_tensor * p = ggml_graph_get_tensor(gf, "inp_pos");
+                        if (t) ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
+                        if (p) ggml_backend_tensor_memset(p, 0, 0, ggml_nbytes(p));
+                        ggml_backend_sched_graph_compute(state_.sched, gf);
+                        ggml_backend_sched_reset(state_.sched);
+                    }
+                }
+
+                // Free temporary caches — synthesis will re-init with correct sizes
                 free_tts_kv_cache(state_.cache);
                 free_tts_kv_cache(state_.code_pred_cache);
             }
