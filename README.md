@@ -4,7 +4,7 @@
 
 C++17 inference for [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) using [GGML](https://github.com/ggml-org/ggml). Full pipeline: tokenization → speaker encoding → transformer code generation → vocoder decoding. No Python or PyTorch at runtime.
 
-Forked from [predict-woo/qwen3-tts.cpp](https://github.com/predict-woo/qwen3-tts.cpp). Current repo: [CHE3MZ/qwen3-tts.cpp-Fork](https://github.com/CHE3MZ/qwen3-tts.cpp-Fork).
+Forked from [predict-woo/qwen3-tts.cpp](https://github.com/predict-woo/qwen3-tts.cpp).
 
 > **Important:** This is a fork with significant additions. You **must** use the included Python conversion scripts — older GGUFs are incompatible. See [Model Setup](#model-setup).
 
@@ -31,20 +31,15 @@ Forked from [predict-woo/qwen3-tts.cpp](https://github.com/predict-woo/qwen3-tts
 
 Peak RSS overhead: Basic +19%, Clone +7.7%. Measured on Apple M-series (Metal backend).
 
-## Quickstart (macOS)
+## Quickstart
 
 ```bash
-git clone https://github.com/predict-woo/qwen3-tts.cpp.git
-cd qwen3-tts.cpp
+git clone https://github.com/CHE3MZ/qwen3-tts.cpp-Fork.git
+cd qwen3-tts.cpp-Fork
 git submodule update --init --recursive
 
-# Build GGML with Metal
-cmake -S ggml -B ggml/build -DGGML_METAL=ON
-cmake --build ggml/build -j4
-
-# Build qwen3-tts.cpp
-cmake -S . -B build
-cmake --build build -j4
+# Build everything (GGML + project) — auto-detects Metal on macOS
+./tools/build-scripts/build.sh
 
 # Setup Python environment + download/convert models
 uv venv .venv && source .venv/bin/activate
@@ -52,12 +47,17 @@ uv pip install huggingface_hub gguf torch safetensors numpy tqdm
 python scripts/setup_pipeline_models.py
 
 # Synthesize!
-./build/qwen3-tts-cli -m models -t "Hello world" -o hello.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello world" -o hello.wav
 ```
 
-### Windows / Linux
+Platform-specific build flags:
 
-Replace `-DGGML_METAL=ON` with `-DGGML_CUDA=ON` (NVIDIA) or `-DGGML_VULKAN=ON` (AMD/Intel). For CPU-only: omit the flag.
+| OS | Command |
+|----|---------|
+| macOS | `./tools/build-scripts/build.sh` (Metal auto-enabled) |
+| Linux (NVIDIA) | `./tools/build-scripts/build.sh --cuda` |
+| Linux (AMD/Intel) | `./tools/build-scripts/build.sh` (CPU-only) |
+| Windows | `tools\build-scripts\build.bat` (or `build.bat --cuda` for CUDA) |
 
 ## Architecture
 
