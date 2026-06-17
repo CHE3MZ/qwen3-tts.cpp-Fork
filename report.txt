@@ -1,0 +1,79 @@
+[1/3] Building GGML...
+-- Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF
+-- CMAKE_SYSTEM_PROCESSOR: arm64
+-- GGML_SYSTEM_ARCH: ARM
+-- Including CPU backend
+-- Accelerate framework found
+-- Could NOT find OpenMP_C (missing: OpenMP_C_FLAGS OpenMP_C_LIB_NAMES) 
+-- Could NOT find OpenMP_CXX (missing: OpenMP_CXX_FLAGS OpenMP_CXX_LIB_NAMES) 
+-- Could NOT find OpenMP (missing: OpenMP_C_FOUND OpenMP_CXX_FOUND) 
+CMake Warning at src/ggml-cpu/CMakeLists.txt:79 (message):
+  OpenMP not found
+Call Stack (most recent call first):
+  src/CMakeLists.txt:445 (ggml_add_cpu_backend_variant_impl)
+
+
+-- ARM detected
+CMake Warning at src/ggml-cpu/CMakeLists.txt:141 (message):
+  ARM -march/-mcpu not found, -mcpu=native will be used
+Call Stack (most recent call first):
+  src/CMakeLists.txt:445 (ggml_add_cpu_backend_variant_impl)
+
+
+-- Checking for ARM features using flags:
+--   -U__ARM_FEATURE_SVE
+--   -mcpu=native+dotprod+i8mm+nosve+sme
+-- Adding CPU backend variant ggml-cpu: -U__ARM_FEATURE_SVE;-mcpu=native+dotprod+i8mm+nosve+sme 
+-- BLAS found, Libraries: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/Accelerate.framework
+-- BLAS found, Includes: 
+-- Including BLAS backend
+-- Metal framework found
+-- Including METAL backend
+-- ARM detected
+-- Accelerate framework found
+-- ggml version: 0.9.6
+-- ggml commit:  5cecdad6
+-- Configuring done (0.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/username/Desktop/qwen3-tts-main/ggml/build
+ninja: no work to do.
+      GGML built OK.
+
+[2/3] Configuring qwen3-tts.cpp...
+-- KV cache: F16 (default, half RAM)
+-- GGML Metal backend found — GPU acceleration enabled (Apple)
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/username/Desktop/qwen3-tts-main/build-ninja
+
+[3/3] Building qwen3-tts.cpp...
+[1/8] Building CXX object CMakeFiles/tts_transformer.dir/src/tts_transformer.cpp.o
+FAILED: [code=1] CMakeFiles/tts_transformer.dir/src/tts_transformer.cpp.o 
+/usr/bin/c++  -I/Users/username/Desktop/qwen3-tts-main/src -I/Users/username/Desktop/qwen3-tts-main/ggml/include -Wall -Wextra -Wpedantic -O3 -DNDEBUG -O3 -march=native -std=gnu++17 -arch arm64 -fPIC -MD -MT CMakeFiles/tts_transformer.dir/src/tts_transformer.cpp.o -MF CMakeFiles/tts_transformer.dir/src/tts_transformer.cpp.o.d -o CMakeFiles/tts_transformer.dir/src/tts_transformer.cpp.o -c /Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp
+/Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp:205:50: error: member access into incomplete type 'struct ggml_cgraph'
+  205 |                     for (int i = 0; i < warmup_gf->n_nodes; ++i) {
+      |                                                  ^
+/Users/username/Desktop/qwen3-tts-main/ggml/include/ggml.h:386:12: note: forward declaration of 'ggml_cgraph'
+  386 |     struct ggml_cgraph;
+      |            ^
+/Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp:206:59: error: member access into incomplete type 'struct ggml_cgraph'
+  206 |                         struct ggml_tensor * t = warmup_gf->nodes[i];
+      |                                                           ^
+/Users/username/Desktop/qwen3-tts-main/ggml/include/ggml.h:386:12: note: forward declaration of 'ggml_cgraph'
+  386 |     struct ggml_cgraph;
+      |            ^
+/Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp:207:34: error: use of undeclared identifier 'ggml_is_input'; did you mean 'ggml_set_input'?
+  207 |                         if (t && ggml_is_input(t)) {
+      |                                  ^~~~~~~~~~~~~
+      |                                  ggml_set_input
+/Users/username/Desktop/qwen3-tts-main/ggml/include/ggml.h:858:19: note: 'ggml_set_input' declared here
+  858 |     GGML_API void ggml_set_input(struct ggml_tensor * tensor);
+      |                   ^
+/Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp:207:34: error: value of type 'void' is not contextually convertible to 'bool'
+  207 |                         if (t && ggml_is_input(t)) {
+      |                                  ^~~~~~~~~~~~~~~~
+/Users/username/Desktop/qwen3-tts-main/src/tts_transformer.cpp:207:31: error: invalid operands to binary expression ('struct ggml_tensor *' and 'void')
+  207 |                         if (t && ggml_is_input(t)) {
+      |                             ~ ^  ~~~~~~~~~~~~~~~~
+5 errors generated.
+ninja: build stopped: subcommand failed.
