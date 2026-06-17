@@ -338,16 +338,16 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
 }
 
 struct ggml_tensor * AudioTokenizerDecoder::apply_snake(struct ggml_context * ctx,
-                                                         struct ggml_tensor * x,
-                                                         struct ggml_tensor * alpha,
-                                                         struct ggml_tensor * beta) {
+                                                          struct ggml_tensor * x,
+                                                          struct ggml_tensor * alpha,
+                                                          struct ggml_tensor * beta) {
     int64_t seq_len = x->ne[0];
     int64_t channels = x->ne[1];
     int64_t batch = x->ne[2];
     
-    struct ggml_tensor * alpha_exp = ggml_exp(ctx, alpha);
-    
-    struct ggml_tensor * alpha_3d = ggml_reshape_3d(ctx, alpha_exp, 1, channels, 1);
+    // snake(x) = x + sin²(αx) / β
+    // α and β are stored directly in the GGUF weights (not log-transformed)
+    struct ggml_tensor * alpha_3d = ggml_reshape_3d(ctx, alpha, 1, channels, 1);
     struct ggml_tensor * alpha_broad = ggml_repeat(ctx, alpha_3d, 
                                                     ggml_new_tensor_3d(ctx, GGML_TYPE_F32, seq_len, channels, batch));
     
@@ -355,13 +355,11 @@ struct ggml_tensor * AudioTokenizerDecoder::apply_snake(struct ggml_context * ct
     struct ggml_tensor * sin_ax = ggml_sin(ctx, ax);
     struct ggml_tensor * sin_sq = ggml_sqr(ctx, sin_ax);
     
-    struct ggml_tensor * neg_beta = ggml_scale(ctx, beta, -1.0f);
-    struct ggml_tensor * inv_beta_exp = ggml_exp(ctx, neg_beta);
-    struct ggml_tensor * inv_beta_3d = ggml_reshape_3d(ctx, inv_beta_exp, 1, channels, 1);
-    struct ggml_tensor * inv_beta = ggml_repeat(ctx, inv_beta_3d, 
-                                                 ggml_new_tensor_3d(ctx, GGML_TYPE_F32, seq_len, channels, batch));
+    struct ggml_tensor * inv_beta_3d = ggml_reshape_3d(ctx, beta, 1, channels, 1);
+    struct ggml_tensor * inv_beta_broad = ggml_repeat(ctx, inv_beta_3d,
+                                                       ggml_new_tensor_3d(ctx, GGML_TYPE_F32, seq_len, channels, batch));
     
-    struct ggml_tensor * scaled_sin = ggml_mul(ctx, sin_sq, inv_beta);
+    struct ggml_tensor * scaled_sin = ggml_div(ctx, sin_sq, inv_beta_broad);
     
     return ggml_add(ctx, x, scaled_sin);
 }

@@ -299,8 +299,8 @@ bool AudioTokenizerEncoder::compute_mel_spectrogram(const float * samples, int32
                                                      std::vector<float> & mel, int32_t & n_frames) {
     const auto & cfg = model_.config;
     
-    // Match PyTorch STFT padding: (n_fft - hop_size) // 2 on each side with reflect
-    int padding = (cfg.n_fft - cfg.hop_length) / 2;
+    // Match PyTorch STFT center=True padding: n_fft // 2 on each side with reflect
+    int padding = cfg.n_fft / 2;
     int padded_length = n_samples + 2 * padding;
     
     // Create padded signal with reflect padding

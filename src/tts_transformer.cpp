@@ -2940,7 +2940,7 @@ static int32_t sample_token(
         float mx = *std::max_element(logits.data(), logits.data() + V);
         double sum_e = 0.0;
         for (int32_t i = 0; i < V; ++i) sum_e += expf(logits[i] - mx);
-        float max_prob = 1.0f;  // prob of argmax is always 1 after normalisation = exp(0)/sum
+        float max_prob = 1.0f / (float)sum_e;  // actual probability of the argmax after softmax
         float threshold = p.min_p * max_prob;
         for (int32_t i = 0; i < V; ++i) {
             float prob = expf(logits[i] - mx) / (float)sum_e;
