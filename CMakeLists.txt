@@ -293,6 +293,26 @@ target_link_libraries(test_mimi_encoder PRIVATE
     Threads::Threads
 )
 
+# Test: VQ codebook encoding/decoding round-trip
+add_executable(test_codebook
+    tests/test_codebook.cpp
+)
+target_link_libraries(test_codebook PRIVATE
+    audio_tokenizer_decoder
+    gguf_loader
+    Threads::Threads
+)
+
+# Test: VQ-only encode/decode
+add_executable(test_vq_only
+    tests/test_vq_only.cpp
+)
+target_link_libraries(test_vq_only PRIVATE
+    audio_tokenizer_decoder
+    gguf_loader
+    Threads::Threads
+)
+
 # Test executable for batch inference validation
 add_executable(test_batch
     tests/test_batch.cpp

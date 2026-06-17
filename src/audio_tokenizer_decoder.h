@@ -223,8 +223,6 @@ private:
     audio_decoder_state state_;
     std::string error_msg_;
     
-    // Temporary storage for codes input
-    std::vector<int32_t> codes_buf_;
 };
 
 // Free model resources

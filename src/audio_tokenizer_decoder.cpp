@@ -34,7 +34,6 @@ void AudioTokenizerDecoder::unload_model() {
     }
 
     state_.compute_meta.clear();
-    codes_buf_.clear();
 }
 
 void AudioTokenizerDecoder::normalize_codebooks() {

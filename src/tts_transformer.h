@@ -258,26 +258,10 @@ public:
     // Clear code predictor KV cache
     void clear_code_pred_kv_cache();
     
-    // Forward pass for text tokens (prefill phase)
-    // text_tokens: input text token IDs [n_tokens]
-    // speaker_embd: speaker embedding [hidden_size] (optional, can be nullptr)
-    // n_past: number of tokens already in KV cache
-    // output: hidden states [n_tokens, hidden_size]
-    bool forward_text(const int32_t * text_tokens, int32_t n_tokens,
-                      const float * speaker_embd, int32_t n_past,
-                      std::vector<float> & output);
-
     bool forward_prefill(const float * prefill_embd, int32_t n_tokens,
                          int32_t n_past, std::vector<float> & output,
                          std::vector<float> * logits_out = nullptr,
                          int32_t batch_idx = 0);
-    
-    // Forward pass for codec tokens (generation phase)
-    // codec_token: single codec token for first codebook
-    // n_past: number of tokens already in KV cache
-    // output: logits for next codec token [codec_vocab_size]
-    bool forward_codec(int32_t codec_token, int32_t n_past,
-                       std::vector<float> & output);
 
     bool forward_step(const float * step_embd, int32_t n_past,
                       std::vector<float> & output,

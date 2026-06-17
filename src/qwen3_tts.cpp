@@ -647,7 +647,7 @@ bool Qwen3TTS::decode_codes_streaming(const std::vector<int32_t> & codes,
     for (int32_t base = 0; base < n_frames && !aborted; base += chunk) {
         int32_t remaining   = n_frames - base;
         int32_t this_chunk  = (chunk < remaining) ? chunk : remaining;
-        int     is_last     = (base + this_chunk >= n_frames) ? 1 : 0;
+        int     is_last     = (base + this_chunk >= n_frames);
 
         std::vector<float> chunk_audio;
         int64_t t0 = get_time_ms();
@@ -664,7 +664,7 @@ bool Qwen3TTS::decode_codes_streaming(const std::vector<int32_t> & codes,
 
         // Fire chunk callback
         int stop = audio_chunk_callback_(chunk_audio.data(), (int32_t)chunk_audio.size(),
-                                          sr, is_last ? 1 : 0);
+                                          sr, is_last);
         if (stop) aborted = true;
     }
 
