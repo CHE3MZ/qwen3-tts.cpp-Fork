@@ -181,7 +181,42 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     if (!try_init_coreml_code_predictor(model_path)) {
         return false;
     }
-    
+
+    // ---- Metal shader warmup ------------------------------------------------
+    // On Apple Silicon, GGML compiles Metal shaders JIT on the first graph that
+    // uses each kernel variant. If this happens during the first real synthesis
+    // it interleaves compilation with inference, which can cause the sampler to
+    // see partial/incorrect outputs for early frames and miss EOS.
+    // Fix: run one dummy step graph at load time so all needed kernels are
+    // compiled and cached before any synthesis begins.
+#if defined(__APPLE__)
+    {
+        ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
+        if (dev && ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU) {
+            fprintf(stderr, "  Warming up Metal shader cache...\n");
+            // Build and compute a single decode step graph with n_past=0.
+            // This forces Metal to JIT-compile all kernel variants used during
+            // inference before the first real synthesis call.
+            struct ggml_cgraph * warmup_gf = build_step_graph(0, 0);
+            if (warmup_gf) {
+                // Zero out all inputs — we only care about kernel compilation
+                if (ggml_backend_sched_alloc_graph(state_.sched, warmup_gf)) {
+                    // Set inp_step_embd and inp_pos to zero
+                    for (int i = 0; i < warmup_gf->n_nodes; ++i) {
+                        struct ggml_tensor * t = warmup_gf->nodes[i];
+                        if (t && ggml_is_input(t)) {
+                            ggml_backend_tensor_memset(t, 0, 0, ggml_nbytes(t));
+                        }
+                    }
+                    ggml_backend_sched_graph_compute(state_.sched, warmup_gf);
+                }
+                ggml_backend_sched_reset(state_.sched);
+            }
+            fprintf(stderr, "  Metal shader cache warmed up.\n");
+        }
+    }
+#endif
+
     return true;
 }
 
