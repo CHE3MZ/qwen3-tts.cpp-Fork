@@ -194,15 +194,21 @@ bool TTSTransformer::load_model(const std::string & model_path) {
         ggml_backend_dev_t dev = ggml_backend_get_device(state_.backend);
         if (dev && ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU) {
             fprintf(stderr, "  Warming up Metal shader cache...\n");
-            struct ggml_cgraph * warmup_gf = build_step_graph(0, 0);
-            if (warmup_gf && ggml_backend_sched_alloc_graph(state_.sched, warmup_gf)) {
-                // Zero the two named inputs: inp_step_embd and inp_pos
-                struct ggml_tensor * inp_embd = ggml_graph_get_tensor(warmup_gf, "inp_step_embd");
-                struct ggml_tensor * inp_pos  = ggml_graph_get_tensor(warmup_gf, "inp_pos");
-                if (inp_embd) ggml_backend_tensor_memset(inp_embd, 0, 0, ggml_nbytes(inp_embd));
-                if (inp_pos)  ggml_backend_tensor_memset(inp_pos,  0, 0, ggml_nbytes(inp_pos));
-                ggml_backend_sched_graph_compute(state_.sched, warmup_gf);
-                ggml_backend_sched_reset(state_.sched);
+            // Allocate a minimal KV cache (1 slot) so build_step_graph doesn't crash,
+            // run one dummy decode step to force Metal shader compilation, then free.
+            if (init_kv_cache(1, 1) && init_code_pred_kv_cache(2, 1)) {
+                struct ggml_cgraph * warmup_gf = build_step_graph(0, 0);
+                if (warmup_gf && ggml_backend_sched_alloc_graph(state_.sched, warmup_gf)) {
+                    struct ggml_tensor * inp_embd = ggml_graph_get_tensor(warmup_gf, "inp_step_embd");
+                    struct ggml_tensor * inp_pos  = ggml_graph_get_tensor(warmup_gf, "inp_pos");
+                    if (inp_embd) ggml_backend_tensor_memset(inp_embd, 0, 0, ggml_nbytes(inp_embd));
+                    if (inp_pos)  ggml_backend_tensor_memset(inp_pos,  0, 0, ggml_nbytes(inp_pos));
+                    ggml_backend_sched_graph_compute(state_.sched, warmup_gf);
+                    ggml_backend_sched_reset(state_.sched);
+                }
+                // Free the temporary KV cache — synthesis will re-init with proper size
+                free_tts_kv_cache(state_.cache);
+                free_tts_kv_cache(state_.code_pred_cache);
             }
             fprintf(stderr, "  Metal shader cache warmed up.\n");
         }
