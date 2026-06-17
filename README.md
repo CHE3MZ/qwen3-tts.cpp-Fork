@@ -12,12 +12,14 @@ Runs the full TTS pipeline in pure C++17, including text tokenization, speaker e
 
 this version of the TTS.cpp is a fork and introduces lots of features not present in the previous builds , you __MUST__ run the updated PY scripts to convert the models tensors to the GGUF that is compatible with this version of the engine , the new script contains support for a mimi encoder for voice cloning which is why you need to run it in order for it to work correctly.
 
+**1.7B model users:** The talker uses hidden_size=2048 but the code predictor uses hidden_size=1024 with a projection matrix bridging them. Re-run `scripts/convert_tts_to_gguf.py` with the updated converter to get the correct metadata + projection tensor. Old GGUFs will load but produce garbled output.
+
 ## Features
 
 - Full text-to-speech pipeline in C++17 with GGML backend
 - Voice cloning from reference audio (ECAPA-TDNN x-vector extraction)
 - Greedy and sampled decoding (temperature, top-k, repetition penalty)
-- GGUF model format (F16 and Q8_0 quantization)
+- GGUF model format (F16, Q8_0, Q5_K, Q6_K, Q4_K, Q3_K, Q2_K quantization)
 - Runtime backend selection with GPU/Metal preference and CPU fallback
 - Deterministic reference tests comparing C++ output against Python
 - Compile-time timing instrumentation with zero overhead in normal builds

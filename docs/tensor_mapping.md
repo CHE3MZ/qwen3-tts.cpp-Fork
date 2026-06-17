@@ -52,25 +52,25 @@ for the Qwen3-TTS model conversion.
 ## Key Architecture Parameters
 
 ### TTS Base Model (Talker)
-| Parameter | Value |
-|-----------|-------|
-| Hidden Size | 1024 |
-| Intermediate Size | 3072 |
-| Num Hidden Layers | 28 |
-| Num Attention Heads | 16 |
-| Num KV Heads | 8 (GQA) |
-| Head Dim | 128 |
-| Vocab Size (codec) | 3072 |
-| Num Code Groups | 16 |
-| RMS Norm Eps | 1e-06 |
-| RoPE Theta | 1000000 |
-| Activation | SiLU |
+| Parameter | 0.6B | 1.7B |
+|-----------|------|------|
+| Hidden Size | 1024 | **2048** |
+| Intermediate Size | 3072 | **6144** |
+| Num Hidden Layers | 28 | 28 |
+| Num Attention Heads | 16 | 16 |
+| Num KV Heads | 8 (GQA) | 8 (GQA) |
+| Head Dim | 128 | 128 |
+| Vocab Size (codec) | 3072 | 3072 |
+| Num Code Groups | 16 | 16 |
+| RMS Norm Eps | 1e-06 | 1e-06 |
+| RoPE Theta | 1000000 | 1000000 |
+| Activation | SiLU | SiLU |
 
 ### Code Predictor (Delay Pattern)
-| Parameter | Value |
-|-----------|-------|
-| Hidden Size | 1024 |
-| Intermediate Size | 3072 |
+| Parameter | 0.6B / 1.7B |
+|-----------|-------------|
+| Hidden Size | 1024 (same for both sizes) |
+| Intermediate Size | 3072 (same for both sizes) |
 | Num Hidden Layers | 5 |
 | Num Attention Heads | 16 |
 | Num KV Heads | 8 |
@@ -153,6 +153,12 @@ talker.code_predictor.model.codec_embedding.{c}.weight
 talker.code_predictor.lm_head.{c}.weight            → code_pred.lm_head.{c}.weight
 
 talker.code_predictor.model.norm.weight             → code_pred.output_norm.weight
+
+# Projection (1.7B only: talker hidden=2048 → code pred hidden=1024)
+talker.code_predictor.small_to_mtp_projection.weight
+                                                     → code_pred.proj.weight
+talker.code_predictor.small_to_mtp_projection.bias
+                                                     → code_pred.proj.bias
 
 # Per-layer tensors (5 layers)
 talker.code_predictor.model.layers.{n}.input_layernorm.weight
@@ -273,8 +279,8 @@ The Talker uses M-RoPE (Multi-dimensional RoPE) with interleaved positions:
 2. **Q/K Norms**: Qwen3-style models apply RMSNorm to Q and K projections before attention.
 
 3. **16 Codebooks**: The model uses 16 parallel codebooks for audio codes. Each codebook has:
-   - Separate embedding layer (2048 × 1024)
-   - Separate LM head (2048 × 1024)
+   - Separate embedding layer (2048 × hidden_size: 1024 for 0.6B, 2048 for 1.7B)
+   - Separate LM head (2048 × 1024, always code predictor hidden_size)
 
 4. **Delay Pattern**: The Code Predictor implements a delay pattern for parallel codebook prediction.
 
