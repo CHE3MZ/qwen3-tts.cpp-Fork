@@ -74,7 +74,7 @@ struct tts_transformer_config {
     float rope_theta = 1000000.0f;
     
     // M-RoPE sections [time, freq, channel] = [24, 20, 20]
-    int32_t mrope_section[3] = {24, 20, 20};
+    // NOTE: currently unused — reserved for future M-RoPE support
     
     // Codec vocabulary
     int32_t codec_vocab_size = 3072;  // talker.codec_embd/codec_head
@@ -472,8 +472,10 @@ private:
     // Create tensor structures
     bool create_tensors(struct gguf_context * ctx);
     
-    // Load tensor data from file
-    bool load_tensor_data(const std::string & path, struct gguf_context * ctx);
+    // Load tensor data from file using an already-acquired backend handle.
+    // Caller owns the backend lifetime; this function does NOT release it.
+    bool load_tensor_data(const std::string & path, struct gguf_context * ctx,
+                          ggml_backend_t backend);
     
     tts_transformer_model model_;
     tts_transformer_state state_;

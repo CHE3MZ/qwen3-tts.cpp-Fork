@@ -131,7 +131,17 @@ bool TTSTransformer::load_model(const std::string & model_path) {
         return false;
     }
     
-    if (!load_tensor_data(model_path, ctx)) {
+    // Acquire the backend before loading tensor data so we only call
+    // init_preferred_backend once and avoid a ref-count double-increment.
+    state_.backend = init_preferred_backend("TTSTransformer", &error_msg_);
+    if (!state_.backend) {
+        free_transformer_model(model_);
+        gguf_free(ctx);
+        if (meta_ctx) ggml_free(meta_ctx);
+        return false;
+    }
+
+    if (!load_tensor_data(model_path, ctx, state_.backend)) {
         free_transformer_model(model_);
         gguf_free(ctx);
         if (meta_ctx) ggml_free(meta_ctx);
@@ -141,10 +151,6 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     gguf_free(ctx);
     if (meta_ctx) ggml_free(meta_ctx);
     
-    state_.backend = init_preferred_backend("TTSTransformer", &error_msg_);
-    if (!state_.backend) {
-        return false;
-    }
     ggml_backend_dev_t device = ggml_backend_get_device(state_.backend);
     const char * device_name = device ? ggml_backend_dev_name(device) : "Unknown";
     fprintf(stderr, "  TTSTransformer backend: %s\n", device_name);
@@ -813,23 +819,18 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
      return true;
  }
 
-bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_context * ctx) {
-    ggml_backend_t backend = init_preferred_backend("TTSTransformer", &error_msg_);
-    if (!backend) {
-        return false;
-    }
-    
+bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_context * ctx,
+                                       ggml_backend_t backend) {
+    // backend is owned by the caller (load_model via state_.backend) — do NOT release it here.
     model_.buffer = ggml_backend_alloc_ctx_tensors(model_.ctx, backend);
     if (!model_.buffer) {
         error_msg_ = "Failed to allocate tensor buffer";
-        release_preferred_backend(backend);
         return false;
     }
     
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         error_msg_ = "Failed to open file for reading: " + path;
-        release_preferred_backend(backend);
         return false;
     }
     
@@ -854,14 +855,12 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
         if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
             error_msg_ = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
-            release_preferred_backend(backend);
             return false;
         }
         
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg_ = "Failed to read tensor data: " + std::string(name);
             fclose(f);
-            release_preferred_backend(backend);
             return false;
         }
         
@@ -869,7 +868,6 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
     }
     
     fclose(f);
-    release_preferred_backend(backend);
     
     return true;
 }
@@ -1925,8 +1923,8 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph(int32_t batch
      cur = ggml_rms_norm(ctx0, cur, eps);
      cur = ggml_mul(ctx0, cur, model_.code_pred_output_norm);
      
-      struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, cp_hs, 1, 
-                                                       cur->nb[1], cp_hs * sizeof(float));
+      struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, cp_hs, 1,
+                                                       cur->nb[1], cur->nb[1]);
      
      struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.code_pred_head[0], last_hidden);
     ggml_set_name(logits, "logits");

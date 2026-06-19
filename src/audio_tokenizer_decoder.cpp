@@ -125,8 +125,6 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
             continue;
         }
         
-
-        
         struct ggml_tensor * meta_tensor = ggml_get_tensor(meta_ctx, name);
         if (!meta_tensor) {
             continue;
@@ -179,8 +177,6 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
             char suffix[64];
             size_t name_len = strlen(name);
             
-
-            
             #define MATCH1(fmt, var) (sscanf(name, fmt "%n", &var, &n) == 1 && (size_t)n == name_len)
             #define MATCH2(fmt, v1, v2) (sscanf(name, fmt "%n", &v1, &v2, &n) == 2 && (size_t)n == name_len)
             #define MATCH1S(fmt, var, suf) (sscanf(name, fmt, &var, suf) == 2)
@@ -230,7 +226,7 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
             }
             // pre_tfm.blk.* tensors are routed above via the sname.find("pre_tfm.blk.") branch
             // and never reach this else-block — no duplicate assignments needed here.
-            if (MATCH1("tok_dec.dec.%d.snake.alpha", blk_idx)) {
+            else if (MATCH1("tok_dec.dec.%d.snake.alpha", blk_idx)) {
                 if (blk_idx >= 1 && blk_idx <= 4) model_.dec_blocks[blk_idx-1].snake_alpha = tensor;
             }
             else if (MATCH1("tok_dec.dec.%d.snake.beta", blk_idx)) {
@@ -576,7 +572,6 @@ struct ggml_tensor * AudioTokenizerDecoder::apply_decoder_block(struct ggml_cont
      
       // Python CausalTransConvNet: only strips right_pad = kernel_size - stride
       int pad = kernel_size - upsample_rate;
-      int left_pad = 0;
       int right_pad = pad;
       int64_t out_seq_len = new_seq_len - right_pad;
       
@@ -811,8 +806,6 @@ bool AudioTokenizerDecoder::decode(const int32_t * codes, int32_t n_frames,
         ggml_backend_tensor_set(cb_tensor, cb_codes.data(), 0, n_frames * sizeof(int32_t));
     }
     
-
-    
     struct ggml_tensor * positions_tensor = ggml_graph_get_tensor(gf, "positions");
     if (positions_tensor) {
         std::vector<int32_t> positions(n_frames);
@@ -822,8 +815,6 @@ bool AudioTokenizerDecoder::decode(const int32_t * codes, int32_t n_frames,
         ggml_backend_tensor_set(positions_tensor, positions.data(), 0, 
                                 n_frames * sizeof(int32_t));
     }
-    
-
     
     if (ggml_backend_sched_graph_compute(state_.sched, gf) != GGML_STATUS_SUCCESS) {
         error_msg_ = "Failed to compute graph";

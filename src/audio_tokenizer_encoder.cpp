@@ -111,13 +111,6 @@ static void compute_dft(const float * input, float * real, float * imag, int n) 
     }
 }
 
-// Periodic Hann window (matches torch.hann_window with periodic=True, which is default)
-static void compute_hann_window(float * window, int n) {
-    for (int i = 0; i < n; ++i) {
-        window[i] = 0.5f * (1.0f - cosf(2.0f * k_pi * i / n));
-    }
-}
-
 // Compute centered window for STFT (PyTorch centers win_length window in n_fft frame)
 static void compute_centered_window(float * window, int n_fft, int win_length) {
     // Zero-initialize
@@ -225,31 +218,31 @@ bool AudioTokenizerEncoder::load_model(const std::string & model_path) {
             int blk_idx, res_idx;
             char suffix[64];
             
-            if (sscanf(name, "spk_enc.blk.%d.tdnn1.%s", &blk_idx, suffix) == 2) {
+            if (sscanf(name, "spk_enc.blk.%d.tdnn1.%63s", &blk_idx, suffix) == 2) {
                 if (blk_idx >= 1 && blk_idx <= 3) {
                     if (strcmp(suffix, "weight") == 0) model_.blocks[blk_idx-1].tdnn1_w = tensor;
                     else if (strcmp(suffix, "bias") == 0) model_.blocks[blk_idx-1].tdnn1_b = tensor;
                 }
             }
-            else if (sscanf(name, "spk_enc.blk.%d.tdnn2.%s", &blk_idx, suffix) == 2) {
+            else if (sscanf(name, "spk_enc.blk.%d.tdnn2.%63s", &blk_idx, suffix) == 2) {
                 if (blk_idx >= 1 && blk_idx <= 3) {
                     if (strcmp(suffix, "weight") == 0) model_.blocks[blk_idx-1].tdnn2_w = tensor;
                     else if (strcmp(suffix, "bias") == 0) model_.blocks[blk_idx-1].tdnn2_b = tensor;
                 }
             }
-            else if (sscanf(name, "spk_enc.blk.%d.res2net.%d.%s", &blk_idx, &res_idx, suffix) == 3) {
+            else if (sscanf(name, "spk_enc.blk.%d.res2net.%d.%63s", &blk_idx, &res_idx, suffix) == 3) {
                 if (blk_idx >= 1 && blk_idx <= 3 && res_idx >= 0 && res_idx < 7) {
                     if (strcmp(suffix, "weight") == 0) model_.blocks[blk_idx-1].res2net_w[res_idx] = tensor;
                     else if (strcmp(suffix, "bias") == 0) model_.blocks[blk_idx-1].res2net_b[res_idx] = tensor;
                 }
             }
-            else if (sscanf(name, "spk_enc.blk.%d.se.conv1.%s", &blk_idx, suffix) == 2) {
+            else if (sscanf(name, "spk_enc.blk.%d.se.conv1.%63s", &blk_idx, suffix) == 2) {
                 if (blk_idx >= 1 && blk_idx <= 3) {
                     if (strcmp(suffix, "weight") == 0) model_.blocks[blk_idx-1].se_conv1_w = tensor;
                     else if (strcmp(suffix, "bias") == 0) model_.blocks[blk_idx-1].se_conv1_b = tensor;
                 }
             }
-            else if (sscanf(name, "spk_enc.blk.%d.se.conv2.%s", &blk_idx, suffix) == 2) {
+            else if (sscanf(name, "spk_enc.blk.%d.se.conv2.%63s", &blk_idx, suffix) == 2) {
                 if (blk_idx >= 1 && blk_idx <= 3) {
                     if (strcmp(suffix, "weight") == 0) model_.blocks[blk_idx-1].se_conv2_w = tensor;
                     else if (strcmp(suffix, "bias") == 0) model_.blocks[blk_idx-1].se_conv2_b = tensor;
