@@ -620,29 +620,29 @@ struct ggml_cgraph * AudioTokenizerEncoder::build_graph(int32_t n_frames) {
      ggml_set_name(cur, "mfa_out");
     
     // ASP (Attentive Statistics Pooling)
-    // cur shape: [seq_len, 1536, 1]
+    // cur shape: [seq_len, hidden_dim*3, 1]  (= 1536 for hidden_dim=512)
     
     // Step 1: Compute global mean and std over time
-    // mean = hidden_states.mean(dim=2, keepdim=True)  # [1, 1536, 1]
+    // mean = hidden_states.mean(dim=2, keepdim=True)  # [1, hidden_dim*3, 1]
     struct ggml_tensor * global_mean = ggml_pool_1d(ctx0, cur, GGML_OP_POOL_AVG, seq_len, seq_len, 0);
-    global_mean = ggml_reshape_3d(ctx0, global_mean, 1, 1536, 1);
+    global_mean = ggml_reshape_3d(ctx0, global_mean, 1, hidden_dim * 3, 1);
     
     // std = sqrt(E[x^2] - E[x]^2)
     struct ggml_tensor * sq = ggml_sqr(ctx0, cur);
     struct ggml_tensor * mean_sq = ggml_pool_1d(ctx0, sq, GGML_OP_POOL_AVG, seq_len, seq_len, 0);
-    mean_sq = ggml_reshape_3d(ctx0, mean_sq, 1, 1536, 1);
+    mean_sq = ggml_reshape_3d(ctx0, mean_sq, 1, hidden_dim * 3, 1);
     struct ggml_tensor * var = ggml_sub(ctx0, mean_sq, ggml_sqr(ctx0, global_mean));
     var = ggml_clamp(ctx0, var, 1e-12f, 1e10f);
     struct ggml_tensor * global_std = ggml_sqrt(ctx0, var);
     
     // Step 2: Expand mean and std to full sequence length and concatenate with hidden_states
-    // mean = mean.repeat(1, 1, seq_length)  # [1, 1536, seq_len]
-    // std = std.repeat(1, 1, seq_length)    # [1, 1536, seq_len]
-    // attention = torch.cat([hidden_states, mean, std], dim=1)  # [1, 4608, seq_len]
+    // mean = mean.repeat(1, 1, seq_length)  # [1, hidden_dim*3, seq_len]
+    // std = std.repeat(1, 1, seq_length)    # [1, hidden_dim*3, seq_len]
+    // attention = torch.cat([hidden_states, mean, std], dim=1)  # [1, hidden_dim*9, seq_len]
     struct ggml_tensor * mean_expanded = ggml_repeat(ctx0, global_mean, 
-                                                      ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, 1536, 1));
+                                                      ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, hidden_dim * 3, 1));
     struct ggml_tensor * std_expanded = ggml_repeat(ctx0, global_std,
-                                                     ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, 1536, 1));
+                                                     ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, hidden_dim * 3, 1));
     
     struct ggml_tensor * attention = ggml_concat(ctx0, cur, mean_expanded, 1);
     attention = ggml_concat(ctx0, attention, std_expanded, 1);
@@ -672,17 +672,17 @@ struct ggml_cgraph * AudioTokenizerEncoder::build_graph(int32_t n_frames) {
     struct ggml_tensor * weighted = ggml_mul(ctx0, attention, cur);
     struct ggml_tensor * weighted_mean = ggml_pool_1d(ctx0, weighted, GGML_OP_POOL_AVG, seq_len, seq_len, 0);
     weighted_mean = ggml_scale(ctx0, weighted_mean, (float)seq_len);  // Convert avg to sum
-    weighted_mean = ggml_reshape_3d(ctx0, weighted_mean, 1, 1536, 1);
+    weighted_mean = ggml_reshape_3d(ctx0, weighted_mean, 1, hidden_dim * 3, 1);
     
     // std = sqrt((attention * (hidden_states - mean)^2).sum(dim=2).clamp(eps))
     struct ggml_tensor * mean_for_std = ggml_repeat(ctx0, weighted_mean,
-                                                     ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, 1536, 1));
+                                                     ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, seq_len, hidden_dim * 3, 1));
     struct ggml_tensor * diff = ggml_sub(ctx0, cur, mean_for_std);
     struct ggml_tensor * diff_sq = ggml_sqr(ctx0, diff);
     struct ggml_tensor * weighted_var = ggml_mul(ctx0, attention, diff_sq);
     struct ggml_tensor * var_sum = ggml_pool_1d(ctx0, weighted_var, GGML_OP_POOL_AVG, seq_len, seq_len, 0);
     var_sum = ggml_scale(ctx0, var_sum, (float)seq_len);  // Convert avg to sum
-    var_sum = ggml_reshape_3d(ctx0, var_sum, 1, 1536, 1);
+    var_sum = ggml_reshape_3d(ctx0, var_sum, 1, hidden_dim * 3, 1);
     var_sum = ggml_clamp(ctx0, var_sum, 1e-12f, 1e10f);
     struct ggml_tensor * weighted_std = ggml_sqrt(ctx0, var_sum);
     
