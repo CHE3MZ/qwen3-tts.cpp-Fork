@@ -216,6 +216,11 @@ void qwen3_tts_clear_abort_callback(Qwen3Tts * tts);
  * Model introspection
  * ------------------------------------------------------------------- */
 
+/* Returns 1 if the Mimi encoder (required for ICL voice cloning) is available.
+ * ICL mode requires ref_text to be set in params AND the Mimi encoder to be
+ * present in the model GGUF. Returns 0 if not available (x-vector only). */
+int qwen3_tts_has_mimi_encoder(const Qwen3Tts * tts);
+
 /* Returns "base", "custom_voice", "voice_design", or "". */
 const char * qwen3_tts_model_type(const Qwen3Tts * tts);
 
@@ -252,6 +257,20 @@ Qwen3TtsResult ** qwen3_tts_synthesize_batch(
     const char ** texts, int32_t n_texts,
     const float * embedding, int32_t embedding_size,
     const Qwen3TtsParams * params);
+
+/* Same as above but with per-entry instruct strings for VoiceDesign / CustomVoice.
+ * instruct_texts: array of n_texts C strings (NULL or empty = no instruct for that entry).
+ * Pass NULL for instruct_texts to get the same behaviour as synthesize_batch. */
+Qwen3TtsResult ** qwen3_tts_synthesize_batch_ex(
+    Qwen3Tts * tts,
+    const char ** texts, int32_t n_texts,
+    const float * embedding, int32_t embedding_size,
+    const Qwen3TtsParams * params,
+    const char ** instruct_texts);
+
+/* Free a batch result array returned by synthesize_batch / synthesize_batch_ex.
+ * Frees each individual result and then the array itself. */
+void qwen3_tts_free_batch_results(Qwen3TtsResult ** results, int32_t n_results);
 
 /* -------------------------------------------------------------------
  * Synthesis — simple API (caller frees audio with qwen3_tts_free_audio)

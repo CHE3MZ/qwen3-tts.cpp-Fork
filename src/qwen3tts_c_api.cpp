@@ -316,45 +316,19 @@ int32_t qwen3_tts_resolve_speaker(const Qwen3Tts * tts, const char * speaker_nam
 
 // ---- batch synthesis --------------------------------------------------------
 
+// Forward declaration — defined after the simple/extended synthesis functions.
+static Qwen3TtsResult ** batch_impl(
+        Qwen3Tts * tts,
+        const char ** texts, int32_t n_texts,
+        const float * embedding, int32_t embedding_size,
+        const Qwen3TtsParams * params,
+        const char ** instruct_texts);
+
 Qwen3TtsResult ** qwen3_tts_synthesize_batch(
         Qwen3Tts * tts, const char ** texts, int32_t n_texts,
         const float * embedding, int32_t embedding_size,
         const Qwen3TtsParams * params) {
-    if (!tts || !texts || n_texts <= 0) return nullptr;
-    ARP_BEGIN
-    auto cpp = to_cpp_params(params, tts->default_n_threads);
-
-    std::vector<std::string> text_vec;
-    for (int32_t i = 0; i < n_texts; ++i) {
-        text_vec.push_back(texts[i] ? texts[i] : "");
-    }
-
-    const float * emb_ptr = (embedding && embedding_size > 0) ? embedding : nullptr;
-    auto results = tts->engine.synthesize_batch(text_vec, emb_ptr, cpp);
-
-    if (results.empty()) {
-        tts->last_error = tts->engine.get_error();
-        ARP_END
-        return nullptr;
-    }
-
-    // Allocate array of result pointers
-    Qwen3TtsResult ** out = (Qwen3TtsResult **)calloc((size_t)n_texts, sizeof(Qwen3TtsResult *));
-    if (!out) { ARP_END return nullptr; }
-
-    for (int32_t i = 0; i < n_texts; ++i) {
-        if (i < (int32_t)results.size()) {
-            out[i] = make_result(results[i]);
-            if (!results[i].success) {
-                tts->last_error = results[i].error_msg;
-            }
-        } else {
-            out[i] = new Qwen3TtsResult{};
-            std::strncpy(out[i]->error_msg, "batch index out of range", sizeof(out[i]->error_msg)-1);
-        }
-    }
-    ARP_END
-    return out;
+    return batch_impl(tts, texts, n_texts, embedding, embedding_size, params, nullptr);
 }
 
 // ---- simple synthesis -------------------------------------------------------
@@ -749,6 +723,89 @@ Qwen3TtsResult * qwen3_tts_decode_codes(
     auto * out = make_result(res);
     ARP_END
     return out;
+}
+
+// ---- mimi encoder availability ----------------------------------------------
+
+int qwen3_tts_has_mimi_encoder(const Qwen3Tts * tts) {
+    if (!tts || !tts->engine.is_loaded()) return 0;
+    // The Mimi encoder is present in the same GGUF as the speaker encoder.
+    // get_embedding_dim() > 0 means the speaker encoder tensors were found,
+    // which is a reliable proxy for Mimi encoder availability.
+    return (tts->engine.get_embedding_dim() > 0) ? 1 : 0;
+}
+
+// ---- batch synthesis (with per-entry instruct) ------------------------------
+
+// Internal shared implementation for both batch variants
+static Qwen3TtsResult ** batch_impl(
+        Qwen3Tts * tts,
+        const char ** texts, int32_t n_texts,
+        const float * embedding, int32_t embedding_size,
+        const Qwen3TtsParams * params,
+        const char ** instruct_texts) {
+    if (!tts || !texts || n_texts <= 0) return nullptr;
+    ARP_BEGIN
+
+    auto cpp = to_cpp_params(params, tts->default_n_threads);
+
+    std::vector<std::string> text_vec;
+    text_vec.reserve((size_t)n_texts);
+    for (int32_t i = 0; i < n_texts; ++i)
+        text_vec.push_back(texts[i] ? texts[i] : "");
+
+    // Build per-entry instruct vector if provided
+    std::vector<std::string> instruct_vec;
+    const std::vector<std::string> * instruct_ptr = nullptr;
+    if (instruct_texts) {
+        instruct_vec.reserve((size_t)n_texts);
+        for (int32_t i = 0; i < n_texts; ++i)
+            instruct_vec.push_back(instruct_texts[i] ? instruct_texts[i] : "");
+        instruct_ptr = &instruct_vec;
+    }
+
+    const float * emb_ptr = (embedding && embedding_size > 0) ? embedding : nullptr;
+    auto results = tts->engine.synthesize_batch(text_vec, emb_ptr, cpp, instruct_ptr);
+
+    if (results.empty()) {
+        tts->last_error = tts->engine.get_error();
+        ARP_END
+        return nullptr;
+    }
+
+    Qwen3TtsResult ** out = (Qwen3TtsResult **)calloc((size_t)n_texts, sizeof(Qwen3TtsResult *));
+    if (!out) { ARP_END return nullptr; }
+
+    for (int32_t i = 0; i < n_texts; ++i) {
+        if (i < (int32_t)results.size()) {
+            out[i] = make_result(results[i]);
+            if (!results[i].success)
+                tts->last_error = results[i].error_msg;
+        } else {
+            out[i] = new Qwen3TtsResult{};
+            std::strncpy(out[i]->error_msg, "batch index out of range",
+                         sizeof(out[i]->error_msg) - 1);
+        }
+    }
+    ARP_END
+    return out;
+}
+
+Qwen3TtsResult ** qwen3_tts_synthesize_batch_ex(
+        Qwen3Tts * tts,
+        const char ** texts, int32_t n_texts,
+        const float * embedding, int32_t embedding_size,
+        const Qwen3TtsParams * params,
+        const char ** instruct_texts) {
+    return batch_impl(tts, texts, n_texts, embedding, embedding_size,
+                      params, instruct_texts);
+}
+
+void qwen3_tts_free_batch_results(Qwen3TtsResult ** results, int32_t n_results) {
+    if (!results) return;
+    for (int32_t i = 0; i < n_results; ++i)
+        qwen3_tts_free_result(results[i]);
+    free(results);
 }
 
 } // extern "C"
