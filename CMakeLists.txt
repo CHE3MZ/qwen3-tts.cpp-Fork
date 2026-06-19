@@ -59,6 +59,7 @@ set(GGML_BUILD_DIR "${GGML_DIR}/build")
 
 # GGML link search dirs: flat (Ninja/Make) and config-suffixed (MSVC multi-config)
 set(GGML_LINK_DIRS
+    ${GGML_BUILD_DIR}/bin
     ${GGML_BUILD_DIR}/src
     ${GGML_BUILD_DIR}/src/Release
     ${GGML_BUILD_DIR}/src/Debug
@@ -75,8 +76,10 @@ endif()
 
 # Detect CUDA backend availability
 if(EXISTS "${GGML_BUILD_DIR}/src/ggml-cuda")
-    file(GLOB GGML_CUDA_LIBS "${GGML_BUILD_DIR}/src/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}"
-                              "${GGML_BUILD_DIR}/src/Release/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    file(GLOB GGML_CUDA_LIBS
+        "${GGML_BUILD_DIR}/bin/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        "${GGML_BUILD_DIR}/src/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        "${GGML_BUILD_DIR}/src/Release/ggml-cuda*${CMAKE_SHARED_LIBRARY_SUFFIX}")
     if(GGML_CUDA_LIBS)
         set(GGML_HAS_CUDA ON)
         message(STATUS "GGML CUDA backend found — GPU acceleration enabled (NVIDIA)")
@@ -89,8 +92,10 @@ endif()
 
 # Detect Vulkan backend availability
 if(EXISTS "${GGML_BUILD_DIR}/src/ggml-vulkan")
-    file(GLOB GGML_VULKAN_LIBS "${GGML_BUILD_DIR}/src/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}"
-                                "${GGML_BUILD_DIR}/src/Release/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    file(GLOB GGML_VULKAN_LIBS
+        "${GGML_BUILD_DIR}/bin/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        "${GGML_BUILD_DIR}/src/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}"
+        "${GGML_BUILD_DIR}/src/Release/ggml-vulkan*${CMAKE_SHARED_LIBRARY_SUFFIX}")
     if(GGML_VULKAN_LIBS)
         set(GGML_HAS_VULKAN ON)
         message(STATUS "GGML Vulkan backend found — GPU acceleration enabled (cross-platform)")
@@ -340,6 +345,7 @@ target_link_libraries(bench_batch PRIVATE
 # Copies core DLLs + any GPU backend DLLs that were built (CUDA, Vulkan).
 if(WIN32)
     set(GGML_DLL_SEARCH_DIRS
+        ${GGML_BUILD_DIR}/bin
         ${GGML_BUILD_DIR}/src/Release
         ${GGML_BUILD_DIR}/src/Debug
         ${GGML_BUILD_DIR}/src
