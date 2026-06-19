@@ -3,20 +3,39 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <mutex>
+
+// Platform headers for mmap
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#else
+#  include <sys/mman.h>
+#  include <sys/stat.h>
+#  include <fcntl.h>
+#  include <unistd.h>
+#endif
 
 namespace qwen3_tts {
 
+// ============================================================
+// Thread-safe shared backend singleton
+// ============================================================
+// All components (TTSTransformer, AudioTokenizerDecoder, etc.) share
+// a single GPU backend to avoid creating multiple Metal/CUDA contexts.
+// A mutex protects init/release against concurrent qwen3_tts_create() calls.
 namespace {
 struct shared_backend_state {
-    ggml_backend_t backend = nullptr;
-    int32_t ref_count = 0;
+    ggml_backend_t backend   = nullptr;
+    int32_t        ref_count = 0;
+    std::mutex     mtx;
 };
 
 shared_backend_state & get_shared_backend_state() {
     static shared_backend_state state;
     return state;
 }
-}
+} // anonymous namespace
 
 GGUFLoader::GGUFLoader() = default;
 
@@ -28,6 +47,8 @@ ggml_backend_t init_preferred_backend(const char * component_name, std::string *
     if (error_msg) error_msg->clear();
 
     auto & shared = get_shared_backend_state();
+    std::lock_guard<std::mutex> lock(shared.mtx);
+
     if (shared.backend) {
         shared.ref_count++;
         return shared.backend;
@@ -50,7 +71,7 @@ ggml_backend_t init_preferred_backend(const char * component_name, std::string *
     }
 
     if (backend) {
-        shared.backend = backend;
+        shared.backend   = backend;
         shared.ref_count = 1;
     }
 
@@ -58,40 +79,41 @@ ggml_backend_t init_preferred_backend(const char * component_name, std::string *
 }
 
 void release_preferred_backend(ggml_backend_t backend) {
-    if (!backend) {
-        return;
-    }
+    if (!backend) return;
 
     auto & shared = get_shared_backend_state();
+    std::lock_guard<std::mutex> lock(shared.mtx);
+
     if (shared.backend == backend) {
         shared.ref_count--;
         if (shared.ref_count <= 0) {
             ggml_backend_free(shared.backend);
-            shared.backend = nullptr;
+            shared.backend   = nullptr;
             shared.ref_count = 0;
         }
         return;
     }
 
+    // Backend not in the shared pool — free directly.
     ggml_backend_free(backend);
 }
 
 bool GGUFLoader::open(const std::string & path) {
-    close();  // Close any previously opened file
-    
+    close();
+
     file_path_ = path;
-    
+
     struct gguf_init_params params = {
         /*.no_alloc =*/ true,
         /*.ctx      =*/ &meta_ctx_,
     };
-    
+
     ctx_ = gguf_init_from_file(path.c_str(), params);
     if (!ctx_) {
         error_msg_ = "Failed to open GGUF file: " + path;
         return false;
     }
-    
+
     return true;
 }
 
@@ -151,6 +173,91 @@ size_t GGUFLoader::get_data_offset() const {
     return gguf_get_data_offset(ctx_);
 }
 
+// ============================================================
+// mmap helpers (RAII)
+// ============================================================
+namespace {
+
+struct MmapFile {
+    const uint8_t * data = nullptr;
+    size_t          size = 0;
+
+#ifdef _WIN32
+    HANDLE hFile   = INVALID_HANDLE_VALUE;
+    HANDLE hMap    = nullptr;
+#else
+    int    fd      = -1;
+#endif
+
+    bool open(const std::string & path) {
+#ifdef _WIN32
+        hFile = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) return false;
+
+        LARGE_INTEGER li;
+        if (!GetFileSizeEx(hFile, &li)) { close(); return false; }
+        size = (size_t)li.QuadPart;
+
+        hMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (!hMap) { close(); return false; }
+
+        data = (const uint8_t *)MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+        if (!data) { close(); return false; }
+#else
+        fd = ::open(path.c_str(), O_RDONLY);
+        if (fd < 0) return false;
+
+        struct stat st;
+        if (fstat(fd, &st) != 0) { close(); return false; }
+        size = (size_t)st.st_size;
+
+        void * ptr = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (ptr == MAP_FAILED) { close(); return false; }
+
+        // Advise the kernel this will be read sequentially (prefetches pages)
+        madvise(ptr, size, MADV_SEQUENTIAL);
+        data = (const uint8_t *)ptr;
+#endif
+        return true;
+    }
+
+    void close() {
+#ifdef _WIN32
+        if (data)  { UnmapViewOfFile(data); data = nullptr; }
+        if (hMap)  { CloseHandle(hMap);     hMap = nullptr; }
+        if (hFile != INVALID_HANDLE_VALUE) {
+            CloseHandle(hFile);
+            hFile = INVALID_HANDLE_VALUE;
+        }
+#else
+        if (data)  { munmap((void *)data, size); data = nullptr; }
+        if (fd >= 0) { ::close(fd); fd = -1; }
+#endif
+        size = 0;
+    }
+
+    ~MmapFile() { close(); }
+
+    // Non-copyable
+    MmapFile() = default;
+    MmapFile(const MmapFile &) = delete;
+    MmapFile & operator=(const MmapFile &) = delete;
+};
+
+} // anonymous namespace
+
+// ============================================================
+// load_tensor_data_from_file
+// ============================================================
+// Uses mmap for zero-copy loading:
+//   - CPU backend: tensor data is served directly from the mmap — the OS
+//     pages it in on demand and can share pages across processes.
+//   - GPU backends (Metal/CUDA/Vulkan): mmap avoids a per-tensor heap
+//     allocation; we pass the mmap pointer directly to ggml_backend_tensor_set
+//     which copies it to VRAM in a single call per tensor.
+//
+// Falls back to fread if mmap is unavailable (e.g. network filesystem).
 bool load_tensor_data_from_file(
     const std::string & path,
     struct gguf_context * ctx,
@@ -168,71 +275,90 @@ bool load_tensor_data_from_file(
         error_msg = "Failed to initialize backend for GGUF tensor loader";
         return false;
     }
-    
-    // Allocate buffer for all tensors
+
     buffer = ggml_backend_alloc_ctx_tensors(model_ctx, backend);
     if (!buffer) {
         error_msg = "Failed to allocate tensor buffer";
         ggml_backend_free(backend);
         return false;
     }
-    
-    // Open file for reading tensor data
+
+    const size_t  data_offset = gguf_get_data_offset(ctx);
+    const int64_t n_tensors   = gguf_get_n_tensors(ctx);
+
+    // ---- Try mmap first -------------------------------------------------
+    MmapFile mf;
+    if (mf.open(path) && mf.data && mf.size > data_offset) {
+        for (int64_t i = 0; i < n_tensors; ++i) {
+            const char * name   = gguf_get_tensor_name(ctx, i);
+            size_t       offset = gguf_get_tensor_offset(ctx, i);
+
+            auto it = tensors.find(name);
+            if (it == tensors.end()) continue;
+
+            struct ggml_tensor * tensor = it->second;
+            size_t nbytes = ggml_nbytes(tensor);
+
+            if (data_offset + offset + nbytes > mf.size) {
+                error_msg = "mmap: tensor data out of bounds: " + std::string(name);
+                ggml_backend_free(backend);
+                return false;
+            }
+
+            // Point directly into the mmap — no intermediate copy on CPU
+            ggml_backend_tensor_set(tensor, mf.data + data_offset + offset, 0, nbytes);
+        }
+        ggml_backend_free(backend);
+        return true;
+    }
+
+    // ---- mmap unavailable — fall back to fread --------------------------
+    mf.close();
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         error_msg = "Failed to open file for reading: " + path;
         ggml_backend_free(backend);
         return false;
     }
-    
-    const size_t data_offset = gguf_get_data_offset(ctx);
-    const int64_t n_tensors = gguf_get_n_tensors(ctx);
+
     std::vector<uint8_t> read_buf;
-    
     for (int64_t i = 0; i < n_tensors; ++i) {
-        const char * name = gguf_get_tensor_name(ctx, i);
-        size_t offset = gguf_get_tensor_offset(ctx, i);
-        
+        const char * name   = gguf_get_tensor_name(ctx, i);
+        size_t       offset = gguf_get_tensor_offset(ctx, i);
+
         auto it = tensors.find(name);
-        if (it == tensors.end()) {
-            continue;  // Skip tensors not in our map
-        }
-        
+        if (it == tensors.end()) continue;
+
         struct ggml_tensor * tensor = it->second;
         size_t nbytes = ggml_nbytes(tensor);
-        
+
         read_buf.resize(nbytes);
-        
-        if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
+
+        if (fseek(f, (long)(data_offset + offset), SEEK_SET) != 0) {
             error_msg = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
             ggml_backend_free(backend);
             return false;
         }
-        
+
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg = "Failed to read tensor data: " + std::string(name);
             fclose(f);
             ggml_backend_free(backend);
             return false;
         }
-        
+
         ggml_backend_tensor_set(tensor, read_buf.data(), 0, nbytes);
     }
-    
+
     fclose(f);
     ggml_backend_free(backend);
-    
     return true;
 }
 
 void free_ggml_resources(struct ggml_context * ctx, ggml_backend_buffer_t buffer) {
-    if (buffer) {
-        ggml_backend_buffer_free(buffer);
-    }
-    if (ctx) {
-        ggml_free(ctx);
-    }
+    if (buffer) ggml_backend_buffer_free(buffer);
+    if (ctx)    ggml_free(ctx);
 }
 
 } // namespace qwen3_tts
