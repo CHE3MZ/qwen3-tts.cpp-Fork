@@ -1,40 +1,108 @@
-# Handoff: 1.7B model bugfixes + codebase cleanup
-<!-- Last updated: 2026-06-17 -->
+# Handoff
+<!-- Last updated: 2026-06-19 -->
 
-## Summary
-Fixed the 1.7B model "infinite generation loop" (code predictor hidden_size=1024 vs talker=2048, projection missing, tensor shapes mismatched). Cleaned up dead code, GPU portability issues, and sampling inconsistencies. All 5 batch tests pass, 0 failures.
+## Repo
+`c:\Users\LEGION 5\Desktop\improve qwen\qwen3-tts.cpp-Fork`
+Branch: `main` — working tree clean, all changes committed.
+Build dir: `build-ninja\` (Ninja + clang-cl, auto-detected)
 
-## Objective
-No active objective. Codebase is stable with both 0.6B and re-converted 1.7B models.
+## Build & Test Commands
 
-## Status
+```bat
+REM build
+cmake --build build-ninja --config Release
 
-### Completed
-- **1.7B code predictor dimension fix**: Added `code_pred_hidden_size`/`code_pred_intermediate_size` config, `small_to_mtp_projection` tensor + graph nodes. `create_tensors` now uses correct dims for code predictor weights. Requires re-converted GGUF.
-- **Converter updated**: Writes `code_predictor.embedding_length`/`feed_forward_length` metadata + `code_pred.proj.weight`/`bias` tensors.
-- **`normalize_codebooks()` GPU crash**: Changed raw `tensor->data` deref to `ggml_backend_tensor_get/set` — fixes segfault on CUDA (Windows/Linux).
-- **Extended sampling propagation**: `generate_icl()` and `generate_from_prefill()` now use struct-based `sample_token` with all `ext_*` params (min_p, DRY, freq/presence penalty, dynamic temp).
-- **`eps` truncation bug**: `const int eps = 1e-6f` in code predictor prefill truncated to 0. Fixed to `const float eps`.
-- **Model size string matching**: Made case-insensitive with dot-stripping (`is_model_size_match()`).
-- **Dead code removed**: `forward_text()`, `forward_codec()`, `codes_buf_` buffer.
-- **Orphaned tests registered**: `test_codebook` and `test_vq_only` added to CMakeLists.txt.
-- **Redundant ternary cleaned**: `is_last ? 1 : 0` in streaming decode.
+REM tests
+.\build-ninja\test_transformer.exe --model models\qwen3-tts-0.6b-f16.gguf
+.\build-ninja\test_batch.exe --model models\qwen3-tts-0.6b-f16.gguf
+.\build-ninja\test_decoder.exe --tokenizer models\qwen3-tts-tokenizer-f16.gguf --codes reference\det_speech_codes.bin --reference reference\det_decoded_audio.bin
+```
 
-## Decisions
-- Old (pre-fix) 1.7B GGUFs without `code_pred_hidden_size` metadata fall back to `cfg.hidden_size` (2048), preserving old buggy behavior. Users must re-convert. This is intentional — backward compat without silent breakage.
-- Code predictor's `codec_embeddings` are kept in talker space (2048-dim) and projected by `code_pred_proj` in the graph, rather than pre-projecting in the converter.
+**Current baseline (all must pass before committing):**
+- `test_transformer`: 6 PASS, 1 WARN, 0 FAIL (WARN = missing instruct reference file, pre-existing, not a regression)
+- `test_batch`: 5 PASS, 0 FAIL
+- `test_decoder`: L2=0.001289, correlation=0.9999
 
-## Non-Obvious Findings
-- 1.7B Qwen3-TTS talker has `hidden_size=2048` but code predictor has `hidden_size=1024`. A `small_to_mtp_projection` matrix bridges them. The HF config key is `talker_config.code_predictor_config.hidden_size = 1024`.
-- Old GGUF loading for 1.7B silently corrupted code predictor weights: `create_tensors` made [2048,2048] tensors but GGUF had [1024,2048] data. `ggml_nbytes` computed 8MB, reads 4MB past tensor boundary into next tensor's data.
+---
 
-## Open Issues
-- M-RoPE (3D positions) not implemented — code uses `GGML_ROPE_TYPE_NEOX` with 1D positions. Config stores `mrope_section = {24,20,20}` but it's unused. Affects positional encoding accuracy for both model sizes.
-- `generate_batch()` uses `std::unordered_set<int32_t>()` as empty gen_tokens for sampling — repetition/freq/presence penalties are NOT applied in batch mode (unlike single `generate()`).
-- KV cache realloc silently drops all KV data (audio may glitch briefly when extending past initial allocation).
+## What Was Done This Session (2026-06-19)
+
+### Bug Fixes
+
+**`audio_tokenizer_decoder.cpp` — tensor routing fall-through (real bug)**
+The else-block that routes `tok_dec.dec.*` tensors had a bare `if` instead of `else if` after the comment about pre_tfm routing. Any tensor that had already matched an upsample pattern (e.g. `gamma`) would fall through and try the `dec.%d.snake.alpha` pattern unconditionally. Fixed to `else if`.
+
+**`audio_tokenizer_encoder.cpp` — `sscanf %s` buffer overflow (latent bug)**
+Five `sscanf` calls used `%s` into `char suffix[64]`. Changed to `%63s` to bound the write.
+
+**`tts_transformer.cpp` — backend ref-count double-increment (real bug)**
+`load_tensor_data()` was calling `init_preferred_backend()` independently, bumping the shared singleton ref-count to 2. Then `release_preferred_backend()` dropped it back to 1, and `load_model()` added another, making the final count 2. On `unload_model()` only one release happened, so the backend was never freed — a resource leak on every reload. Fixed by acquiring the backend once in `load_model()` before calling `load_tensor_data()`, then passing it in. Signature: `load_tensor_data(path, ctx, backend)`. Header updated.
+
+**`tts_transformer.h` — `mrope_section[3]` dead field**
+Declared in `tts_transformer_config` but never read anywhere in the codebase. Removed. Replaced with a comment: "reserved for future M-RoPE support". Struct layout change is safe — the struct is never serialised or memcpy'd, always populated field-by-field from GGUF.
+
+**`audio_tokenizer_decoder.cpp` — `left_pad = 0` unused variable**
+In `apply_decoder_block`. Removed.
+
+**`audio_tokenizer_encoder.cpp` — dead `compute_hann_window()` function**
+Defined but never called (the code uses `compute_centered_window()` instead). Removed.
+
+**`audio_tokenizer_decoder.cpp` — double blank lines in tensor-loading loop**
+Cosmetic cleanup after the first `continue;` and after `strlen(name)`. Removed extra blank lines.
+
+**`tts_transformer.cpp` — `last_hidden` view offset hardcoded as `cp_hs * sizeof(float)`**
+`ggml_view_2d` offset should use `cur->nb[1]` (always the correct row stride regardless of element type) not `cp_hs * sizeof(float)` (assumes F32). Fixed.
+
+### CMakeLists.txt — GGML `bin/` path fix
+GGML Ninja builds output DLLs to `ggml/build/bin/` but CMakeLists only searched `ggml/build/src/` and `ggml/build/src/Release/`. The CLI was silently failing to start (DLL not found, process exited before printing anything). Fixed in three places: `GGML_LINK_DIRS`, `GGML_DLL_SEARCH_DIRS`, and the CUDA/Vulkan detection `file(GLOB ...)` calls. All now include `${GGML_BUILD_DIR}/bin` as the first search location. Additive change — existing `src/` paths are still searched so MSVC multi-config builds are unaffected.
+
+### C API — Three New Functions
+Full audit of `qwen3tts_c_api.h/.cpp` vs `qwen3_tts.h/.cpp` and `main.cpp`. Gaps found and fixed:
+
+1. **`qwen3_tts_has_mimi_encoder(tts)`** — returns 1 if the model's speaker encoder (and by extension Mimi encoder) is present. Lets C callers check ICL availability without attempting a synthesis call. Implementation uses `engine.get_embedding_dim() > 0` as a proxy — the embedding dim is populated from GGUF metadata when the encoder tensors exist.
+
+2. **`qwen3_tts_synthesize_batch_ex(tts, texts, n, emb, emb_sz, params, instruct_texts)`** — batch synthesis with per-entry instruct strings. The old `synthesize_batch` was always passing `nullptr` for `instruct_per_entry` to the C++ layer. VoiceDesign/CustomVoice per-entry style control was completely inaccessible via the C API. Fixed by introducing a shared `batch_impl()` internal static function that both `synthesize_batch` and `synthesize_batch_ex` call.
+
+3. **`qwen3_tts_free_batch_results(results, n)`** — frees each result in a batch array then frees the array itself. Previously callers had to manually loop, call `qwen3_tts_free_result` on each, then `free()` the array.
+
+### `docs/porting.md` — New File
+Created a porting guide for anyone forking the project to build another TTS model (chatterbox.cpp, fish-speech.cpp etc.). Maps every source file as keep/adapt/rewrite, documents the generic skeleton, notes which constants are hardcoded and why, explains the GGUF namespace prefix strategy (`qwen3-tts.*` → change globally).
+
+### `audio_tokenizer_encoder.cpp` — `1536` un-hardcoded
+The ASP pooling section in `build_graph()` had `1536` as a live reshape/repeat dimension in 7 places. `1536 = hidden_dim * 3` (3 MFA block outputs × 512 channels). The local `const int hidden_dim = cfg.hidden_dim` was already in scope. Replaced all 7 live occurrences with `hidden_dim * 3`. Comments updated. Config is fully populated before `build_graph()` is ever called — confirmed safe. Produces identical output (verified via test_decoder baseline).
+
+---
+
+## Open Issues (Carry Forward)
+
+### From Previous Session
+- **M-RoPE not implemented** — `tts_transformer_config::mrope_section` field was removed this session (dead), but the underlying issue remains: the code uses `GGML_ROPE_TYPE_NEOX` with 1D positions. For single-batch inference this is equivalent; for batched or very long sequences it may diverge from the Python reference.
+- **Batch mode missing rep/freq/presence penalties** — `generate_batch()` passes an empty `std::unordered_set<int32_t>()` as `gen_tokens`, so repetition, frequency, and presence penalties are never applied in batch mode. Single `generate()` applies them correctly.
+- **KV cache realloc drops KV data** — when generation exceeds the initial KV allocation, the cache is reallocated and a warning is printed, but all prior KV entries are lost. Audio may glitch at that point.
+
+### From This Session
+- **CUDA GitHub Actions workflow** — deferred by user. Plan agreed: `windows-latest` runner + `Jimver/cuda-toolkit` action, builds GGML with `-DGGML_CUDA=ON`, produces `qwen3-tts-cuda-windows-x64.zip` attached to GitHub Release on tag push. Not started. No `.github/workflows/` directory exists yet.
+- **Production audit** — user wants a full bug/security/risk/memory-leak/stability audit to determine if the codebase is production-ready. This is the next priority task per `jobs.md`.
+- **`handoff.md` at repo root** — a duplicate `handoff.md` was accidentally created at the repo root during this session. It should be deleted; the canonical file is `docs/handoff.md`.
+
+---
+
+## Important Rules for Next Agent
+
+- **Do not touch `tools/build-scripts/build.bat` or `build.sh`** — user explicitly reverted changes to these scripts twice. They have a known spaces-in-path issue but user does not want them modified.
+- **F16 KV cache is intentional default** — `-DQWEN3_TTS_KV_F32` is a debug-only flag. User tested both and confirmed F16 sounds better. Do not change the default.
+- **1.7B english language default** — `params_language_id()` silently defaults to `"english"` for 1.7B when no language is specified. This is intentional — without it the 1.7B model free-runs to `max_tokens`.
+- **Flash attention** — used in `build_step_graph` and `build_code_pred_step_graph` (single-token decode). Not used in prefill (multi-token). This split is intentional and correct. Do not remove flash attention.
+- **Metal shader warmup** — `#if defined(__APPLE__)` block in `TTSTransformer::load_model()` pre-compiles Metal kernels at KV sizes {1,32,64,128,256,512}. macOS only, intentional.
+- **`qwen3_tts_sample_rate()` returns hardcoded 24000** — audited and left intentionally. The encoder is lazy-loaded so reading from config at call time could return a stale default. Documented in `docs/porting.md`.
+- **Always build and run all three tests after changes** — baseline documented above.
+- **`max_audio_tokens` default is 4096** — user requested raising to 8192, was implemented, then user discarded it. Leave at 4096.
+
+---
 
 ## References
-- C API: `src/qwen3tts_c_api.h`
 - Architecture: `AGENTS.md`
-- Tensor mapping: `docs/tensor_mapping.md`
+- Tensor naming: `docs/tensor_mapping.md`
+- Porting guide: `docs/porting.md`
+- C API: `src/qwen3tts_c_api.h`
 - Converter: `scripts/convert_tts_to_gguf.py`
