@@ -37,12 +37,18 @@ jobs:
         with:
           submodules: recursive
 
+      # ─────────────────────────────────────────────
+      # FIXED MSVC SETUP (DO NOT PIN TOOLSET)
+      # ─────────────────────────────────────────────
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          toolset: 14.38  # or 14.40
+          toolset: latest
 
+      # ─────────────────────────────────────────────
+      # CUDA INSTALL / DETECTION
+      # ─────────────────────────────────────────────
       - name: Setup CUDA Toolkit (preinstalled or install fallback)
         shell: pwsh
         run: |
@@ -56,10 +62,8 @@ jobs:
 
             $cudaPath = Split-Path (Split-Path $nvcc.Source)
 
-            echo "$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            echo "CUDAToolkit_ROOT=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-            echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
+            echo "$cudaPath\bin" >> $env:GITHUB_PATH
 
             exit 0
           }
@@ -76,11 +80,6 @@ jobs:
 
           $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
 
-          if (!(Test-Path $cudaBase)) {
-            Write-Error "CUDA install failed: folder not found"
-            exit 1
-          }
-
           $cudaDir = Get-ChildItem $cudaBase -Directory |
             Sort-Object Name -Descending |
             Select-Object -First 1
@@ -89,25 +88,43 @@ jobs:
 
           Write-Host "CUDA installed at: $cudaPath"
 
-          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          echo "CUDAToolkit_ROOT=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
 
           & "$cudaPath\bin\nvcc.exe" --version
 
+      # ─────────────────────────────────────────────
+      # CUDA + MSVC COMPAT FIX (IMPORTANT)
+      # ─────────────────────────────────────────────
+      - name: CUDA compatibility fix
+        shell: pwsh
+        run: |
+          echo "CUDAHOSTCXX=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe" >> $env:GITHUB_ENV
+          echo "CMAKE_CUDA_FLAGS=--allow-unsupported-compiler" >> $env:GITHUB_ENV
+
+      # ─────────────────────────────────────────────
+      # GGML CONFIG (CUDA)
+      # ─────────────────────────────────────────────
       - name: Configure GGML with CUDA
         shell: cmd
         run: >
-          cmake -S ggml -B ggml\build
-          -G Ninja
+          cmake -S ggml -B ggml\build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGGML_CUDA=ON
           -DGGML_CUDA_F16=ON
           -DCUDAToolkit_ROOT="%CUDAToolkit_ROOT%"
+          -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
 
+      # ─────────────────────────────────────────────
+      # BUILD GGML
+      # ─────────────────────────────────────────────
       - name: Build GGML
         shell: cmd
         run: cmake --build ggml\build --config Release -j 4
 
+      # ─────────────────────────────────────────────
+      # BUILD PROJECT
+      # ─────────────────────────────────────────────
       - name: Configure project
         shell: cmd
         run: >
@@ -119,17 +136,24 @@ jobs:
         shell: cmd
         run: cmake --build build-release --config Release -j 4
 
+      # ─────────────────────────────────────────────
+      # PACKAGE
+      # ─────────────────────────────────────────────
       - name: Package artifact
         shell: pwsh
         run: |
           $out = "dist-cuda-win"
           New-Item -ItemType Directory -Path $out -Force | Out-Null
           New-Item -ItemType Directory -Path "$out\include" -Force | Out-Null
+
           Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
           Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
-          Get-ChildItem build-release\ggml*.dll | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll      | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
           Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
 
+      # ─────────────────────────────────────────────
+      # UPLOAD
+      # ─────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -143,7 +167,7 @@ jobs:
   build-metal:
     name: Metal (macOS)
     if: ${{ github.event.inputs.backend == 'metal' || github.event.inputs.backend == 'all' }}
-    runs-on: macos-14-arm64
+    runs-on: macos-14
 
     steps:
       - name: Checkout (with submodules)
