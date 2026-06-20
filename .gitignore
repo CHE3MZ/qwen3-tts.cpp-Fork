@@ -60,3 +60,9 @@ debug_*.bin
 
 # Old reference implementations (superseded by src/)
 Qwen3-TTS-reference/
+
+# GPU build folders from github workflow
+
+qwen3-tts-vulkan-windows-x64/
+qwen3-tts-vulkan-windows/
+qwen3-tts-metal-macos/
