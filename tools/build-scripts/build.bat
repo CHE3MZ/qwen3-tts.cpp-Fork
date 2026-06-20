@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 REM ============================================================
 REM  qwen3-tts.cpp -- Windows build script
-REM  Usage: build.bat [Release|Debug] [--cuda] [--kv-f32]
+REM  Usage: build.bat [Release|Debug] [--cuda] [--vulkan] [--kv-f32]
 REM
 REM  Ninja is used automatically when available (faster builds).
 REM  Checks both system PATH and the VS-bundled Ninja location.
@@ -12,6 +12,7 @@ REM ============================================================
 
 set BUILD_TYPE=Release
 set CUDA=OFF
+set VULKAN=OFF
 set KV_F32=OFF
 
 :parse_args
@@ -19,6 +20,7 @@ if "%~1"=="" goto args_done
 if /i "%~1"=="debug"    set BUILD_TYPE=Debug
 if /i "%~1"=="release"  set BUILD_TYPE=Release
 if /i "%~1"=="--cuda"   set CUDA=ON
+if /i "%~1"=="--vulkan" set VULKAN=ON
 if /i "%~1"=="--kv-f32" set KV_F32=ON
 shift
 goto parse_args
@@ -77,7 +79,7 @@ echo [build] Generator: %GEN_LABEL%
 echo.
 echo ============================================================
 echo  qwen3-tts.cpp build  [%BUILD_TYPE%]
-echo  CUDA: %CUDA%   KV_F32: %KV_F32%
+echo  CUDA: %CUDA%   VULKAN: %VULKAN%   KV_F32: %KV_F32%
 echo  Generator: %GEN_LABEL%
 echo  Output:    %REPO_ROOT%\%BUILD_DIR%\
 echo ============================================================
@@ -85,9 +87,12 @@ echo.
 
 REM ---- Step 1: Build GGML submodule ---------------------------
 echo [1/3] Building GGML...
-set GGML_FLAGS=-DGGML_CUDA=%CUDA%
+set GGML_FLAGS=-DGGML_CUDA=%CUDA% -DGGML_VULKAN=%VULKAN%
 if "%CUDA%"=="ON" (
     echo       CUDA enabled -- make sure CUDA toolkit is installed.
+)
+if "%VULKAN%"=="ON" (
+    echo       Vulkan enabled -- make sure LunarG Vulkan SDK is installed.
 )
 
 cmake -S ggml -B ggml\build %CMAKE_GEN% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %GGML_FLAGS%
