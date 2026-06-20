@@ -750,6 +750,9 @@ int32_t Qwen3TTS::synthesize_codes_with_voice(const std::string & text,
     }
     if (!ensure_encoder_loaded(params)) return -1;
     std::vector<float> emb;
+    if ((int32_t)ref_samples.size() > 30 * encoder_sample_rate_)
+        fprintf(stderr, "  [warn] Reference audio %.1fs > 30s -- encoder will be slow. 3-30s recommended.\n",
+                ref_samples.size() / (float)encoder_sample_rate_);
     if (!audio_encoder_.encode(ref_samples.data(), (int32_t)ref_samples.size(), emb)) {
         error_msg_ = "Speaker encoding failed: " + audio_encoder_.get_error();
         return -1;
@@ -1025,6 +1028,9 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     // Extract speaker embedding
     int64_t t0 = get_time_ms();
     std::vector<float> speaker_embedding;
+    if (n_ref_samples > 30 * encoder_sample_rate_)
+        fprintf(stderr, "  [warn] Reference audio %.1fs > 30s -- encoder will be slow. 3-30s recommended.\n",
+                n_ref_samples / (float)encoder_sample_rate_);
     if (!audio_encoder_.encode(ref_samples, n_ref_samples, speaker_embedding)) {
         result.error_msg = "Speaker encoding failed: " + audio_encoder_.get_error();
         return result;
@@ -1173,6 +1179,9 @@ bool Qwen3TTS::extract_speaker_embedding(const float * ref_samples, int32_t n_re
                                           const tts_params & params) {
     if (!models_loaded_) { error_msg_ = "Models not loaded"; return false; }
     if (!ensure_encoder_loaded(params)) return false;
+    if (n_ref_samples > 30 * encoder_sample_rate_)
+        fprintf(stderr, "  [warn] Reference audio %.1fs > 30s -- encoder will be slow. 3-30s recommended.\n",
+                n_ref_samples / (float)encoder_sample_rate_);
     if (!audio_encoder_.encode(ref_samples, n_ref_samples, embedding)) {
         error_msg_ = "Speaker encoding failed: " + audio_encoder_.get_error();
         return false;
@@ -1679,3 +1688,5 @@ bool load_speaker_embedding(const std::string & path, std::vector<float> & embed
 }
 
 } // namespace qwen3_tts
+
+
