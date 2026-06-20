@@ -1,8 +1,10 @@
 # GPU Release Builds — CUDA (Windows), Metal (macOS), Vulkan (Windows)
 #
-# Trigger: manual only (workflow_dispatch).
-# Produces a zip artifact for each backend uploaded to the workflow run.
-# No automatic triggers — push, PR, and schedule are all disabled.
+# Trigger: manual only (workflow_dispatch). No automatic triggers whatsoever.
+# Produces a zip artifact for each backend uploaded to the workflow run (30-day retention).
+#
+# Usage:
+#   Actions tab → "GPU Release Builds" → Run workflow → pick backend
 
 name: GPU Release Builds
 
@@ -10,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       backend:
-        description: 'Backend to build'
+        description: 'Which backend to build'
         required: true
         default: 'all'
         type: choice
@@ -20,10 +22,10 @@ on:
           - metal
           - vulkan
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CUDA — Windows + MSVC + NVIDIA CUDA Toolkit
+# ──────────────────────────────────────────────────────────────────────────────
 jobs:
-  # ────────────────────────────────────────────────────────────────────────────
-  # CUDA — Windows + MSVC + NVIDIA CUDA Toolkit
-  # ────────────────────────────────────────────────────────────────────────────
   build-cuda:
     name: CUDA (Windows)
     if: ${{ github.event.inputs.backend == 'cuda' || github.event.inputs.backend == 'all' }}
@@ -35,43 +37,55 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install CUDA Toolkit
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install CUDA Toolkit 12.6
         uses: Jimver/cuda-toolkit@v0.2.21
         with:
           cuda: '12.6.0'
           method: network
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart_dev", "cublas", "cublas_dev"]'
 
       - name: Configure GGML with CUDA
+        shell: cmd
         run: >
-          cmake -S ggml -B ggml/build -G "Visual Studio 17 2022" -A x64
+          cmake -S ggml -B ggml\build
+          -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGGML_CUDA=ON
+          -DGGML_CUDA_F16=ON
 
       - name: Build GGML
-        run: cmake --build ggml/build --config Release -j 4
+        shell: cmd
+        run: cmake --build ggml\build --config Release -j 4
 
       - name: Configure project
+        shell: cmd
         run: >
-          cmake -S . -B build-release -G "Visual Studio 17 2022" -A x64
+          cmake -S . -B build-release
+          -G Ninja
           -DCMAKE_BUILD_TYPE=Release
 
       - name: Build project
+        shell: cmd
         run: cmake --build build-release --config Release -j 4
 
       - name: Package artifact
         shell: pwsh
         run: |
           $out = "dist-cuda"
-          New-Item -ItemType Directory -Path $out | Out-Null
-          # CLI and shared lib
-          Copy-Item build-release\Release\qwen3-tts-cli.exe  $out\
-          Copy-Item build-release\Release\qwen3tts.dll        $out\
-          # Core GGML DLLs (staged by CMake into build-release\Release\)
-          Get-ChildItem build-release\Release\ggml*.dll | Copy-Item -Destination $out\
-          # CUDA runtime DLL (may be in build dir or CUDA install)
-          Get-ChildItem build-release\Release\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination $out\
-          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-cuda-windows-x64.zip
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          # Ninja builds output to build root, not Release\ subdir
+          Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $out\ -Force
+          New-Item -ItemType Directory -Path $out\include -Force | Out-Null
+          Copy-Item src\qwen3tts_c_api.h $out\include\ -ErrorAction SilentlyContinue
+          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-cuda-windows-x64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -80,9 +94,9 @@ jobs:
           path: qwen3-tts-cuda-windows-x64.zip
           retention-days: 30
 
-  # ────────────────────────────────────────────────────────────────────────────
-  # Metal — macOS (Apple Silicon + Intel, Metal built-in)
-  # ────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Metal — macOS (Apple Silicon, Metal built-in)
+# ──────────────────────────────────────────────────────────────────────────────
   build-metal:
     name: Metal (macOS)
     if: ${{ github.event.inputs.backend == 'metal' || github.event.inputs.backend == 'all' }}
@@ -115,14 +129,19 @@ jobs:
       - name: Package artifact
         run: |
           mkdir -p dist-metal
-          cp build-release/qwen3-tts-cli     dist-metal/
+          # CLI
+          cp build-release/qwen3-tts-cli dist-metal/ 2>/dev/null || true
+          # C API shared lib
           cp build-release/libqwen3tts.dylib dist-metal/ 2>/dev/null || true
-          cp build-release/libqwen3tts.so    dist-metal/ 2>/dev/null || true
-          # Copy Metal shader cache if embedded library is off
-          find ggml/build -name "*.metallib" -exec cp {} dist-metal/ \; 2>/dev/null || true
-          # Core GGML dylibs
-          find ggml/build -name "libggml*.dylib" -exec cp {} dist-metal/ \; 2>/dev/null || true
+          # GGML dylibs
+          find ggml/build -name 'libggml*.dylib' -exec cp {} dist-metal/ \; 2>/dev/null || true
+          # Metal shader library (present when EMBED_LIBRARY=OFF; embedded when ON)
+          find ggml/build -name '*.metallib' -exec cp {} dist-metal/ \; 2>/dev/null || true
+          # Header for C API users
+          mkdir -p dist-metal/include
+          cp src/qwen3tts_c_api.h dist-metal/include/
           zip -j qwen3-tts-metal-macos.zip dist-metal/*
+          zip -r qwen3-tts-metal-macos.zip dist-metal/include
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -131,9 +150,9 @@ jobs:
           path: qwen3-tts-metal-macos.zip
           retention-days: 30
 
-  # ────────────────────────────────────────────────────────────────────────────
-  # Vulkan — Windows + LunarG Vulkan SDK
-  # ────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Vulkan — Windows + LunarG Vulkan SDK (jakoch/install-vulkan-sdk-action)
+# ──────────────────────────────────────────────────────────────────────────────
   build-vulkan:
     name: Vulkan (Windows)
     if: ${{ github.event.inputs.backend == 'vulkan' || github.event.inputs.backend == 'all' }}
@@ -145,39 +164,54 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          version: latest
-          cache: true
+          arch: x64
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.0.0
+        with:
+          vulkan_version: latest
+          install_runtime: true
+          cache: false
+          stripdown: false
 
       - name: Configure GGML with Vulkan
+        shell: cmd
         run: >
-          cmake -S ggml -B ggml/build -G "Visual Studio 17 2022" -A x64
+          cmake -S ggml -B ggml\build
+          -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGGML_VULKAN=ON
 
       - name: Build GGML
-        run: cmake --build ggml/build --config Release -j 4
+        shell: cmd
+        run: cmake --build ggml\build --config Release -j 4
 
       - name: Configure project
+        shell: cmd
         run: >
-          cmake -S . -B build-release -G "Visual Studio 17 2022" -A x64
+          cmake -S . -B build-release
+          -G Ninja
           -DCMAKE_BUILD_TYPE=Release
 
       - name: Build project
+        shell: cmd
         run: cmake --build build-release --config Release -j 4
 
       - name: Package artifact
         shell: pwsh
         run: |
           $out = "dist-vulkan"
-          New-Item -ItemType Directory -Path $out | Out-Null
-          Copy-Item build-release\Release\qwen3-tts-cli.exe $out\
-          Copy-Item build-release\Release\qwen3tts.dll       $out\
-          Get-ChildItem build-release\Release\ggml*.dll | Copy-Item -Destination $out\
-          Get-ChildItem build-release\Release\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination $out\
-          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-vulkan-windows-x64.zip
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $out\ -Force
+          New-Item -ItemType Directory -Path $out\include -Force | Out-Null
+          Copy-Item src\qwen3tts_c_api.h $out\include\ -ErrorAction SilentlyContinue
+          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-vulkan-windows-x64.zip -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
