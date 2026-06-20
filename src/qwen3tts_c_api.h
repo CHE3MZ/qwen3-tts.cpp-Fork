@@ -62,7 +62,7 @@ typedef struct Qwen3TtsParams {
     float   subtalker_top_p;        /* default: -1.0 (inherit main)       */
 
     /* ---- Concurrency ---- */
-    int32_t n_threads;              /* 0=auto (hardware_concurrency/2)    */
+    int32_t n_threads;              /* 0=auto (min(hardware_concurrency, 8)) */
 
     /* ---- Language / speaker / style ---- */
     /* language_name takes precedence over language_id when non-empty.

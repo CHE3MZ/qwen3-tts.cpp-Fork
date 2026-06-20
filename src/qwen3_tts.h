@@ -372,6 +372,8 @@ private:
 
     // From GGUF metadata (qwen3-tts.speaker_encoder.embedding_length).
     int32_t speaker_embedding_dim_ = 1024;
+    // From GGUF metadata (qwen3-tts.speaker_encoder.sample_rate).
+    int32_t encoder_sample_rate_   = 24000;
 
     std::string error_msg_;
     std::string tts_model_path_;

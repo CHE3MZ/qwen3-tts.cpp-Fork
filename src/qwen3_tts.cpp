@@ -294,6 +294,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
             return false;
         }
         speaker_embedding_dim_ = loader.get_u32("qwen3-tts.speaker_encoder.embedding_length", 1024);
+        encoder_sample_rate_   = loader.get_u32("qwen3-tts.speaker_encoder.sample_rate", 24000);
         fprintf(stderr, "  Text tokenizer loaded: vocab_size=%d\n",
                 tokenizer_.get_config().vocab_size);
     }
@@ -720,9 +721,9 @@ int32_t Qwen3TTS::synthesize_codes_with_voice(const std::string & text,
         error_msg_ = "Failed to load reference audio: " + reference_audio;
         return -1;
     }
-    if (ref_sr != 24000) {
+    if (ref_sr != encoder_sample_rate_) {
         std::vector<float> resampled;
-        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sr, resampled, 24000);
+        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sr, resampled, encoder_sample_rate_);
         ref_samples = std::move(resampled);
     }
     if (!ensure_encoder_loaded(params)) return -1;
@@ -906,7 +907,11 @@ std::vector<tts_result> Qwen3TTS::synthesize_batch(
             results[i].success = false;
             continue;
         }
-        decode_codes_streaming(batch_codes[i], results[i], params);
+        if (!decode_codes_streaming(batch_codes[i], results[i], params)) {
+            // error_msg already set inside decode_codes_streaming
+            results[i].success = false;
+            continue;
+        }
         results[i].sample_rate = audio_decoder_.get_config().sample_rate;
         results[i].success = true;
     }
@@ -976,9 +981,9 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
         result.error_msg = "Failed to load reference audio: " + ref_audio_path;
         return result;
     }
-    if (ref_sr != 24000) {
+    if (ref_sr != encoder_sample_rate_) {
         std::vector<float> resampled;
-        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sr, resampled, 24000);
+        resample_linear(ref_samples.data(), (int)ref_samples.size(), ref_sr, resampled, encoder_sample_rate_);
         ref_samples = std::move(resampled);
     }
     return synthesize_with_voice(text, ref_samples.data(), (int32_t)ref_samples.size(), params);
@@ -1132,9 +1137,9 @@ bool Qwen3TTS::extract_speaker_embedding(const std::string & ref_audio_path,
         error_msg_ = "Failed to load audio: " + ref_audio_path;
         return false;
     }
-    if (sr != 24000) {
+    if (sr != encoder_sample_rate_) {
         std::vector<float> resampled;
-        resample_linear(samples.data(), (int)samples.size(), sr, resampled, 24000);
+        resample_linear(samples.data(), (int)samples.size(), sr, resampled, encoder_sample_rate_);
         samples = std::move(resampled);
     }
     return extract_speaker_embedding(samples.data(), (int32_t)samples.size(), embedding);
