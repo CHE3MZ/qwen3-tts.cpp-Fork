@@ -23,75 +23,74 @@ on:
           - vulkan
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CUDA — Windows + MSVC + NVIDIA CUDA Toolkit
+# CUDA — Windows + MSVC + NVIDIA CUDA Toolkit (direct install, no action wrapper)
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   build-cuda:
-    name: CUDA (Windows)
+    name: CUDA (Ubuntu)
     if: ${{ github.event.inputs.backend == 'cuda' || github.event.inputs.backend == 'all' }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+
+    container: nvidia/cuda:12.8.0-devel-ubuntu22.04
 
     steps:
+      # ───────────────────────────────
+      # FIX: install git FIRST
+      # ───────────────────────────────
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git cmake ninja-build build-essential
+
+      # ───────────────────────────────
+      # NOW checkout works normally
+      # ───────────────────────────────
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Install CUDA Toolkit 12.6
-        uses: Jimver/cuda-toolkit@v0.2.21
-        with:
-          cuda: '12.6.0'
-          method: network
-          sub-packages: '["nvcc", "cudart", "cudart_dev", "cublas", "cublas_dev"]'
+      - name: Verify CUDA
+        run: nvcc --version
 
       - name: Configure GGML with CUDA
-        shell: cmd
-        run: >
-          cmake -S ggml -B ggml\build
-          -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DGGML_CUDA=ON
-          -DGGML_CUDA_F16=ON
+        run: |
+          cmake -S ggml -B ggml/build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DGGML_CUDA_F16=ON
 
       - name: Build GGML
-        shell: cmd
-        run: cmake --build ggml\build --config Release -j 4
+        run: cmake --build ggml/build --config Release -j $(nproc)
 
       - name: Configure project
-        shell: cmd
-        run: >
-          cmake -S . -B build-release
-          -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build-release \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Build project
-        shell: cmd
-        run: cmake --build build-release --config Release -j 4
+        run: cmake --build build-release --config Release -j $(nproc)
 
       - name: Package artifact
-        shell: pwsh
         run: |
-          $out = "dist-cuda"
-          New-Item -ItemType Directory -Path $out -Force | Out-Null
-          # Ninja builds output to build root, not Release\ subdir
-          Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
-          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
-          Get-ChildItem build-release\ggml*.dll -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $out\ -Force
-          New-Item -ItemType Directory -Path $out\include -Force | Out-Null
-          Copy-Item src\qwen3tts_c_api.h $out\include\ -ErrorAction SilentlyContinue
-          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-cuda-windows-x64.zip -Force
+          mkdir -p dist-cuda
+
+          cp build-release/qwen3-tts-cli dist-cuda/ || true
+          cp build-release/libqwen3tts.so dist-cuda/ || true
+          find build-release -name "libggml*.so" -exec cp {} dist-cuda/ \; || true
+
+          mkdir -p dist-cuda/include
+          cp src/qwen3tts_c_api.h dist-cuda/include/
+
+          tar -czf qwen3-tts-cuda-linux-x64.tar.gz -C dist-cuda .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qwen3-tts-cuda-windows-x64
-          path: qwen3-tts-cuda-windows-x64.zip
+          name: qwen3-tts-cuda-linux-x64
+          path: qwen3-tts-cuda-linux-x64.tar.gz
           retention-days: 30
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -119,39 +118,31 @@ jobs:
         run: cmake --build ggml/build --config Release -j $(sysctl -n hw.logicalcpu)
 
       - name: Configure project
-        run: |
-          cmake -S . -B build-release \
-            -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 
       - name: Build project
         run: cmake --build build-release --config Release -j $(sysctl -n hw.logicalcpu)
 
       - name: Package artifact
         run: |
-          mkdir -p dist-metal
-          # CLI
-          cp build-release/qwen3-tts-cli dist-metal/ 2>/dev/null || true
-          # C API shared lib
-          cp build-release/libqwen3tts.dylib dist-metal/ 2>/dev/null || true
-          # GGML dylibs
-          find ggml/build -name 'libggml*.dylib' -exec cp {} dist-metal/ \; 2>/dev/null || true
-          # Metal shader library (present when EMBED_LIBRARY=OFF; embedded when ON)
-          find ggml/build -name '*.metallib' -exec cp {} dist-metal/ \; 2>/dev/null || true
-          # Header for C API users
           mkdir -p dist-metal/include
+          cp build-release/qwen3-tts-cli      dist-metal/ 2>/dev/null || true
+          cp build-release/libqwen3tts.dylib  dist-metal/ 2>/dev/null || true
+          find ggml/build -name 'libggml*.dylib' -exec cp {} dist-metal/ \; 2>/dev/null || true
+          find ggml/build -name '*.metallib'     -exec cp {} dist-metal/ \; 2>/dev/null || true
           cp src/qwen3tts_c_api.h dist-metal/include/
-          zip -j qwen3-tts-metal-macos.zip dist-metal/*
-          zip -r qwen3-tts-metal-macos.zip dist-metal/include
+          # Upload artifact action wraps in its own zip — upload the folder directly
+          # to avoid a zip-inside-zip. We pass the folder path, not a .zip file.
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qwen3-tts-metal-macos
-          path: qwen3-tts-metal-macos.zip
+          path: dist-metal/
           retention-days: 30
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Vulkan — Windows + LunarG Vulkan SDK (jakoch/install-vulkan-sdk-action)
+# Vulkan — Windows + LunarG Vulkan SDK
 # ──────────────────────────────────────────────────────────────────────────────
   build-vulkan:
     name: Vulkan (Windows)
@@ -170,12 +161,11 @@ jobs:
           arch: x64
 
       - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.0.0
+        uses: jakoch/install-vulkan-sdk-action@v1.5.5
         with:
-          vulkan_version: latest
+          vulkan_version: 1.4.309.0
           install_runtime: true
           cache: false
-          stripdown: false
 
       - name: Configure GGML with Vulkan
         shell: cmd
@@ -205,17 +195,15 @@ jobs:
         run: |
           $out = "dist-vulkan"
           New-Item -ItemType Directory -Path $out -Force | Out-Null
+          New-Item -ItemType Directory -Path "$out\include" -Force | Out-Null
           Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
           Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
-          Get-ChildItem build-release\ggml*.dll -ErrorAction SilentlyContinue |
-            Copy-Item -Destination $out\ -Force
-          New-Item -ItemType Directory -Path $out\include -Force | Out-Null
-          Copy-Item src\qwen3tts_c_api.h $out\include\ -ErrorAction SilentlyContinue
-          Compress-Archive -Path $out\* -DestinationPath qwen3-tts-vulkan-windows-x64.zip -Force
+          Get-ChildItem build-release\ggml*.dll      | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qwen3-tts-vulkan-windows-x64
-          path: qwen3-tts-vulkan-windows-x64.zip
+          path: dist-vulkan/
           retention-days: 30
