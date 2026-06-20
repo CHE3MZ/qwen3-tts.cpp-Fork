@@ -2207,11 +2207,12 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
         return false;
     }
 
-    // Chunk large prefills to stay within QWEN3_TTS_MAX_NODES.
-    // Each token costs ~20 graph nodes per layer (28 layers = ~560 nodes/token).
-    // 16384 nodes / 560 nodes-per-token ≈ 29 safe tokens per chunk.
-    // We use 16 for a comfortable margin, and fall through to the single-pass
-    // path when n_tokens is already within the safe range.
+    // Chunk large prefills to avoid excessive peak memory in the GGML scheduler.
+    // The graph node count is fixed (~38 ops/layer × 28 layers ≈ 1069 nodes regardless
+    // of n_tokens), but the scheduler's internal buffer allocation scales with tensor
+    // sizes (e.g. KQ attention matrix is [n_kv, n_tokens] per head per layer).
+    // For large ICL prefills (90+ tokens) this caused ggml_backend_sched_alloc_graph
+    // to stall or fail silently. Processing in chunks of 16 keeps peak allocations small.
     static constexpr int32_t PREFILL_CHUNK_SIZE = 16;
     if (n_tokens > PREFILL_CHUNK_SIZE) {
         const int32_t H = model_.config.hidden_size;
