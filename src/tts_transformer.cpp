@@ -2206,7 +2206,50 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
         error_msg_ = "n_tokens must be > 0";
         return false;
     }
-    
+
+    // Chunk large prefills to stay within QWEN3_TTS_MAX_NODES.
+    // Each token costs ~20 graph nodes per layer (28 layers = ~560 nodes/token).
+    // 16384 nodes / 560 nodes-per-token ≈ 29 safe tokens per chunk.
+    // We use 16 for a comfortable margin, and fall through to the single-pass
+    // path when n_tokens is already within the safe range.
+    static constexpr int32_t PREFILL_CHUNK_SIZE = 16;
+    if (n_tokens > PREFILL_CHUNK_SIZE) {
+        const int32_t H = model_.config.hidden_size;
+        // Ensure KV cache is large enough for the full prefill upfront.
+        if (state_.cache.n_ctx == 0) {
+            const int32_t min_ctx = std::max<int32_t>(256, n_past + n_tokens + 16);
+            if (!init_kv_cache(min_ctx)) return false;
+        }
+        if (n_past + n_tokens > state_.cache.n_ctx) {
+            const int32_t new_ctx = n_past + n_tokens + 512;
+            if (!extend_kv_cache(new_ctx, n_past)) {
+                error_msg_ = "Context length exceeded and failed to extend KV cache";
+                return false;
+            }
+        }
+        // Process in chunks. Only the last chunk needs logits_out.
+        int32_t pos = n_past;
+        int32_t remaining = n_tokens;
+        output.resize((size_t)n_tokens * H);
+        while (remaining > 0) {
+            const int32_t chunk = std::min(remaining, PREFILL_CHUNK_SIZE);
+            const bool is_last  = (remaining == chunk);
+            const float * chunk_embd = prefill_embd + (size_t)(n_tokens - remaining) * H;
+            std::vector<float> chunk_out;
+            std::vector<float> * chunk_logits = is_last ? logits_out : nullptr;
+            if (!forward_prefill(chunk_embd, chunk, pos, chunk_out, chunk_logits, batch_idx)) {
+                return false;
+            }
+            // Copy chunk hidden states into the output buffer at the right offset.
+            const size_t off = (size_t)(n_tokens - remaining) * H;
+            memcpy(output.data() + off, chunk_out.data(), (size_t)chunk * H * sizeof(float));
+            pos       += chunk;
+            remaining -= chunk;
+        }
+        // last_hidden_ was set by the final chunk's forward_prefill call — already correct.
+        return true;
+    }
+
     if (state_.cache.n_ctx == 0) {
         const int32_t min_ctx = std::max<int32_t>(256, n_past + n_tokens + 16);
         if (!init_kv_cache(min_ctx)) {
@@ -4171,3 +4214,4 @@ void free_tts_kv_cache(tts_kv_cache & cache) {
 }
 
 } // namespace qwen3_tts
+
