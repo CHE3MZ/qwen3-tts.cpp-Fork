@@ -45,36 +45,22 @@ jobs:
       - name: Setup CUDA Toolkit
         shell: pwsh
         run: |
-          $nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
+          Write-Host "Installing CUDA 12.8 via Chocolatey..."
+          choco install cuda --version=12.8.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { Write-Error "Chocolatey CUDA install failed"; exit 1 }
 
-          if ($nvcc) {
-            $cudaPath = Split-Path (Split-Path $nvcc.Source)
-            echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
-            echo "$cudaPath\bin" >> $env:GITHUB_PATH
-            exit 0
-          }
+          $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+          $cudaDir = Get-ChildItem $cudaBase -Directory |
+                     Sort-Object Name -Descending |
+                     Select-Object -First 1
+          if (-not $cudaDir) { Write-Error "CUDA dir not found after install"; exit 1 }
 
-          Invoke-WebRequest `
-            -Uri "https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe" `
-            -OutFile cuda.exe
-
-          Start-Process cuda.exe -ArgumentList "-s nvcc_12.8 cudart_12.8" -Wait
-
-          $cudaPath = Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-
-          $cudaPath = $cudaPath.FullName
+          $cudaPath = $cudaDir.FullName
+          Write-Host "CUDA installed at: $cudaPath"
+          & "$cudaPath\bin\nvcc.exe" --version
 
           echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
           echo "$cudaPath\bin" >> $env:GITHUB_PATH
-
-      # ✅ FIX: CUDA + MSVC compatibility workaround
-      - name: CUDA compatibility fix
-        shell: pwsh
-        run: |
-          echo "CUDAHOSTCXX=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe" >> $env:GITHUB_ENV
-          echo "CMAKE_CUDA_FLAGS=--allow-unsupported-compiler" >> $env:GITHUB_ENV
 
       - name: Configure GGML (CUDA)
         shell: cmd
@@ -85,6 +71,7 @@ jobs:
           -DGGML_CUDA_F16=ON
           -DCUDAToolkit_ROOT="%CUDAToolkit_ROOT%"
           -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
+          -DCMAKE_CUDA_HOST_COMPILER="%VCToolsInstallDir%\bin\Hostx64\x64\cl.exe"
 
       - name: Build GGML
         shell: cmd
