@@ -51,11 +51,9 @@ MODEL_VARIANTS = {
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
     },
     "voice_design": {
-        "label": "VoiceDesign — Describe a voice in natural language + voice cloning (1.7B)",
+        "label": "VoiceDesign — Describe a voice in natural language + voice cloning (1.7B only)",
         "recommended": False,
-        "repo_0.6b": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
         "repo_1.7b": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        "local_0.6b": "Qwen3-TTS-12Hz-0.6B-VoiceDesign",
         "local_1.7b": "Qwen3-TTS-12Hz-1.7B-VoiceDesign",
     },
 }
@@ -210,7 +208,7 @@ All models output 24 kHz mono audio.
                   e.g. "Calm, warm female voice with a slight British accent".
                   Best for: creating novel voices when you don't have reference audio.
                   Also works: voice cloning with a reference WAV (same as Base).
-                  Note: instruct/description mode requires 1.7B (0.6B ignores it).
+                  Note: 1.7B only — Alibaba has not published a 0.6B VoiceDesign model.
 """)
     variant_keys = list(MODEL_VARIANTS.keys())
     if non_interactive:
@@ -223,21 +221,24 @@ All models output 24 kHz mono audio.
 
     # ---- Step 2: Model size --------------------------------------
     step(2, TOTAL_STEPS, "Choose model size")
-    print("""
+
+    # VoiceDesign is 1.7B only — Alibaba never published a 0.6B VoiceDesign model
+    if chosen_variant == "voice_design":
+        chosen_size = "1.7b"
+        print("  VoiceDesign is 1.7B only (no 0.6B model exists).")
+        print(f"  -> {chosen_size}")
+    else:
+        print("""
   0.6B  — Faster, lighter (~1.75 GB F16). Good quality for most use cases.
   1.7B  — Slower, heavier (~4.2 GB F16). Better naturalness and prosody.
           Required for VoiceDesign instruct mode.
 """)
-    if non_interactive:
-        chosen_size = "0.6b"
-        print(f"  [non-interactive] Using: {chosen_size}")
-    else:
-        chosen_size = ask("Select size (1-2)", ["0.6b", "1.7b"], default="0.6b")
-    print(f"  -> {chosen_size}")
-
-    if chosen_variant == "voice_design" and chosen_size == "0.6b":
-        print("\n  [note] VoiceDesign instruct mode is not supported on 0.6B.")
-        print("         The model will still work for basic synthesis without instruct.")
+        if non_interactive:
+            chosen_size = "0.6b"
+            print(f"  [non-interactive] Using: {chosen_size}")
+        else:
+            chosen_size = ask("Select size (1-2)", ["0.6b", "1.7b"], default="0.6b")
+        print(f"  -> {chosen_size}")
 
     # ---- Step 3: Quantization ------------------------------------
     step(3, TOTAL_STEPS, "Choose quantization (TTS transformer weights)")

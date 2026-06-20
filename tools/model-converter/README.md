@@ -46,7 +46,7 @@ models/
 |---|---|
 | **Base** | Clone a voice from a reference WAV file |
 | **CustomVoice** | Pick from named built-in speakers |
-| **VoiceDesign** | Describe a voice in natural language (1.7B only for instruct) |
+| **VoiceDesign** | Describe a voice in natural language (**1.7B only** — no 0.6B model exists) |
 
 | Quantization | Size (0.6B) | Quality |
 |---|---|---|
