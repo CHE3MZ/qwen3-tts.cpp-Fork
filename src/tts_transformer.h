@@ -334,7 +334,8 @@ public:
         float top_p = 1.0f,
         float subtalker_temperature = -1.0f,
         int32_t subtalker_top_k = -1,
-        float subtalker_top_p = -1.0f);
+        float subtalker_top_p = -1.0f,
+        bool non_streaming_mode = false);
 
     bool generate_from_prefill(const std::vector<float> & prefill_embd,
                                 const std::vector<float> & trailing_text_hidden,
@@ -466,6 +467,15 @@ private:
     // Processes [past_hidden, codec_embd(codebook_0_token)] together
     struct ggml_cgraph * build_code_pred_prefill_graph(int32_t batch_idx = 0);
     
+    // Grow talker KV cache while preserving positions [0, n_positions_to_copy).
+    bool extend_kv_cache(int32_t new_ctx, int32_t n_positions_to_copy);
+
+    // Generic KV cache extension — operates on any tts_kv_cache via a reinit callback.
+    // Used by extend_kv_cache (talker) and can be used for code_pred_cache if needed.
+    bool extend_kv_cache_impl(tts_kv_cache & cache, int32_t new_ctx,
+                               int32_t n_positions_to_copy,
+                               std::function<bool(int32_t, int32_t)> reinit_fn);
+
     // Parse hyperparameters from GGUF
     bool parse_config(struct gguf_context * ctx);
     

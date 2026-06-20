@@ -327,6 +327,9 @@ public:
     // hardcoding 1024 to stay correct across model variants.
     int32_t get_embedding_dim() const;
 
+    // True when the Mimi encoder was loaded from the tokenizer GGUF (ICL path).
+    bool has_mimi_encoder() const { return mimi_encoder_loaded_; }
+
 private:
     // Core internal synthesis that all public paths funnel into.
     // If codes_only=true, stops after generation (no vocoder) and populates result.audio
@@ -367,6 +370,9 @@ private:
     bool mimi_encoder_loaded_= false;
     bool low_mem_mode_       = false;
 
+    // From GGUF metadata (qwen3-tts.speaker_encoder.embedding_length).
+    int32_t speaker_embedding_dim_ = 1024;
+
     std::string error_msg_;
     std::string tts_model_path_;
     std::string decoder_model_path_;
@@ -389,6 +395,10 @@ private:
     tts_logits_callback_t      logits_callback_;
     tts_audio_chunk_callback_t audio_chunk_callback_;
     int32_t                    audio_chunk_frames_ = 12;  // ~1 s at 12 Hz
+
+    // Stored so abort works even if set before transformer reload (low-mem mode).
+    ggml_abort_callback abort_cb_      = nullptr;
+    void *              abort_cb_data_ = nullptr;
 };
 
 // ============================================================

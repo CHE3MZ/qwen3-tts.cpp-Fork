@@ -872,6 +872,83 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
     return true;
 }
 
+bool TTSTransformer::extend_kv_cache(int32_t new_ctx, int32_t n_positions_to_copy) {
+    // Delegates to the generic implementation operating on the talker KV cache.
+    return extend_kv_cache_impl(
+        state_.cache, new_ctx, n_positions_to_copy,
+        [this](int32_t ctx, int32_t batch) { return init_kv_cache(ctx, batch); });
+}
+
+bool TTSTransformer::extend_kv_cache_impl(
+        tts_kv_cache & cache, int32_t new_ctx, int32_t n_positions_to_copy,
+        std::function<bool(int32_t, int32_t)> reinit_fn) {
+    if (new_ctx <= cache.n_ctx) {
+        return true;
+    }
+    if (!cache.ctx || cache.k_cache.empty() || !cache.k_cache[0]) {
+        return reinit_fn(new_ctx, cache.n_batch > 0 ? cache.n_batch : 1);
+    }
+
+    const int32_t old_ctx   = cache.n_ctx;
+    const int32_t n_batch   = cache.n_batch > 0 ? cache.n_batch : 1;
+    const int32_t n_layers  = cache.n_layers;
+    const int32_t n_copy    = std::min(n_positions_to_copy, old_ctx);
+    const size_t  nb_pos    = cache.k_cache[0]->nb[2];
+
+    if (n_copy > 0 && nb_pos > 0) {
+        std::vector<std::vector<uint8_t>> k_saved((size_t)n_layers);
+        std::vector<std::vector<uint8_t>> v_saved((size_t)n_layers);
+        const size_t bytes_per_batch = (size_t)n_copy * nb_pos;
+
+        for (int il = 0; il < n_layers; ++il) {
+            k_saved[il].resize(bytes_per_batch * (size_t)n_batch);
+            v_saved[il].resize(bytes_per_batch * (size_t)n_batch);
+            for (int b = 0; b < n_batch; ++b) {
+                const size_t batch_off = (n_batch > 1)
+                    ? (size_t)b * cache.k_cache[il]->nb[3] : 0;
+                const size_t dst_off   = (size_t)b * bytes_per_batch;
+                ggml_backend_tensor_get(cache.k_cache[il],
+                                        k_saved[il].data() + dst_off,
+                                        batch_off, bytes_per_batch);
+                ggml_backend_tensor_get(cache.v_cache[il],
+                                        v_saved[il].data() + dst_off,
+                                        batch_off, bytes_per_batch);
+            }
+        }
+
+        const int32_t n_used_saved = cache.n_used;
+        if (!reinit_fn(new_ctx, n_batch)) {
+            return false;
+        }
+
+        // After reinit, cache now refers to the newly-allocated cache — reuse
+        // the same reference since reinit_fn wrote into the same struct.
+        for (int il = 0; il < n_layers; ++il) {
+            for (int b = 0; b < n_batch; ++b) {
+                const size_t batch_off = (n_batch > 1)
+                    ? (size_t)b * cache.k_cache[il]->nb[3] : 0;
+                const size_t src_off   = (size_t)b * bytes_per_batch;
+                ggml_backend_tensor_set(cache.k_cache[il],
+                                        k_saved[il].data() + src_off,
+                                        batch_off, bytes_per_batch);
+                ggml_backend_tensor_set(cache.v_cache[il],
+                                        v_saved[il].data() + src_off,
+                                        batch_off, bytes_per_batch);
+            }
+        }
+        cache.n_used = std::max(n_used_saved, n_copy);
+        fprintf(stderr, "  [info] KV cache extended %d -> %d (preserved %d positions)\n",
+                old_ctx, new_ctx, n_copy);
+        return true;
+    }
+
+    if (!reinit_fn(new_ctx, n_batch)) {
+        return false;
+    }
+    fprintf(stderr, "  [info] KV cache extended %d -> %d (empty cache)\n", old_ctx, new_ctx);
+    return true;
+}
+
 bool TTSTransformer::init_kv_cache(int32_t n_ctx, int32_t n_batch) {
     const auto & cfg = model_.config;
     
@@ -2132,9 +2209,8 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
     }
     
     if (n_past + n_tokens > state_.cache.n_ctx) {
-        // Extend KV cache if needed
         const int32_t new_ctx = n_past + n_tokens + 512;
-        if (!init_kv_cache(new_ctx)) {
+        if (!extend_kv_cache(new_ctx, n_past)) {
             error_msg_ = "Context length exceeded and failed to extend KV cache";
             return false;
         }
@@ -2268,19 +2344,11 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
     }
 
     if (n_past + 1 > state_.cache.n_ctx) {
-        // KV cache exhausted — extend it by 512 slots to allow continued generation.
-        // This can happen when max_tokens > initial allocation or when generation
-        // runs longer than expected.
         const int32_t new_ctx = state_.cache.n_ctx + 512;
-        fprintf(stderr, "  [warn] KV cache full at n_past=%d, extending to %d\n",
-                n_past, new_ctx);
-        if (!init_kv_cache(new_ctx)) {
+        if (!extend_kv_cache(new_ctx, n_past)) {
             error_msg_ = "Context length exceeded and failed to extend KV cache";
             return false;
         }
-        // Re-run clear since init_kv_cache resets n_used
-        // (existing KV data is unfortunately lost on realloc — generation continues
-        //  from this point with fresh cache; audio quality may degrade briefly)
     }
     
 #ifdef QWEN3_TTS_TIMING
@@ -3736,7 +3804,8 @@ bool TTSTransformer::generate_batch(
     float top_p,
     float subtalker_temperature,
     int32_t subtalker_top_k,
-    float subtalker_top_p) {
+    float subtalker_top_p,
+    bool non_streaming_mode) {
 
     if (!model_.ctx) { error_msg_ = "Model not loaded"; return false; }
     if (n_batch <= 0) { return true; }
@@ -3788,7 +3857,7 @@ bool TTSTransformer::generate_batch(
                                                entries[b].prefill_embd,
                                                entries[b].trailing_text_hidden,
                                                entries[b].tts_pad_embed,
-                                               /*non_streaming_mode=*/false)) {
+                                               non_streaming_mode)) {
                 error_msg_ = "Batch entry " + std::to_string(b) + " instruct prefill failed: " + error_msg_;
 #ifdef QWEN3_TTS_TIMING
                 timing_ = nullptr;
@@ -3801,7 +3870,7 @@ bool TTSTransformer::generate_batch(
                                      entries[b].prefill_embd,
                                      entries[b].trailing_text_hidden,
                                      entries[b].tts_pad_embed,
-                                     /*non_streaming_mode=*/false)) {
+                                     non_streaming_mode)) {
                 error_msg_ = "Batch entry " + std::to_string(b) + " prefill build failed: " + error_msg_;
 #ifdef QWEN3_TTS_TIMING
                 timing_ = nullptr;
@@ -3890,6 +3959,7 @@ bool TTSTransformer::generate_batch(
     std::vector<int32_t> frame_codes(cfg.n_codebooks);
 
     // Extended sampling state (per batch entry)
+    std::vector<std::unordered_set<int32_t>> batch_gen_tokens(n_batch);
     std::vector<std::vector<int32_t>> batch_token_history(n_batch);
     std::vector<std::unordered_map<int32_t,int32_t>> batch_token_counts(n_batch);
 
@@ -3921,9 +3991,9 @@ bool TTSTransformer::generate_batch(
 
             std::vector<float> & logits = cached_logits[b];
 
-            // Sample CB0 with extended sampling
+            // Sample CB0 with extended sampling (same gen_tokens tracking as generate())
             int32_t next_token = sample_token(
-                logits, std::unordered_set<int32_t>(),
+                logits, batch_gen_tokens[b],
                 (ext_dry_multiplier != 0.0f) ? &batch_token_history[b] : nullptr,
                 (ext_frequency_penalty != 0.0f || ext_presence_penalty != 0.0f) ? &batch_token_counts[b] : nullptr,
                 probs, rng_, stp);
@@ -3937,6 +4007,7 @@ bool TTSTransformer::generate_batch(
             frame_count[b]++;
 
             // Track token history and counts for extended sampling
+            batch_gen_tokens[b].insert(next_token);
             batch_token_history[b].push_back(next_token);
             batch_token_counts[b][next_token]++;
 

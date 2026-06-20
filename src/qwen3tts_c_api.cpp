@@ -729,10 +729,7 @@ Qwen3TtsResult * qwen3_tts_decode_codes(
 
 int qwen3_tts_has_mimi_encoder(const Qwen3Tts * tts) {
     if (!tts || !tts->engine.is_loaded()) return 0;
-    // The Mimi encoder is present in the same GGUF as the speaker encoder.
-    // get_embedding_dim() > 0 means the speaker encoder tensors were found,
-    // which is a reliable proxy for Mimi encoder availability.
-    return (tts->engine.get_embedding_dim() > 0) ? 1 : 0;
+    return tts->engine.has_mimi_encoder() ? 1 : 0;
 }
 
 // ---- batch synthesis (with per-entry instruct) ------------------------------

@@ -293,6 +293,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
             error_msg_ = "Failed to load text tokenizer: " + tokenizer_.get_error();
             return false;
         }
+        speaker_embedding_dim_ = loader.get_u32("qwen3-tts.speaker_encoder.embedding_length", 1024);
         fprintf(stderr, "  Text tokenizer loaded: vocab_size=%d\n",
                 tokenizer_.get_config().vocab_size);
     }
@@ -303,6 +304,9 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
         return false;
     }
     transformer_loaded_ = true;
+    if (abort_cb_) {
+        transformer_.set_abort_callback(abort_cb_, abort_cb_data_);
+    }
     {
         const auto & cfg = transformer_.get_config();
         fprintf(stderr, "  Transformer loaded: hidden=%d layers=%d model_type='%s' model_size='%s'\n",
@@ -360,6 +364,11 @@ bool Qwen3TTS::load_generation_config(const std::string & json_path) {
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (sz <= 0) { fclose(f); return false; }
+    if (sz > 1024 * 1024) {
+        fclose(f);
+        fprintf(stderr, "ERROR: generation_config.json too large (%ld bytes)\n", sz);
+        return false;
+    }
     std::string json(sz, '\0');
     if (fread(&json[0], 1, sz, f) != (size_t)sz) { fclose(f); return false; }
     fclose(f);
@@ -882,7 +891,8 @@ std::vector<tts_result> Qwen3TTS::synthesize_batch(
             params.repetition_penalty,
             params.temperature, params.top_k, params.top_p,
             params.subtalker_temperature, params.subtalker_top_k,
-            params.subtalker_top_p)) {
+            params.subtalker_top_p,
+            params.non_streaming_mode)) {
         tts_result r; r.error_msg = "Batch generation failed: " + transformer_.get_error();
         results.push_back(r);
         return results;
@@ -1161,9 +1171,13 @@ void Qwen3TTS::set_progress_callback(tts_progress_callback_t cb) {
 
 // --- set_abort_callback / clear_abort_callback ----------------------------
 void Qwen3TTS::set_abort_callback(ggml_abort_callback fn, void * userdata) {
+    abort_cb_      = fn;
+    abort_cb_data_ = userdata;
     if (transformer_loaded_) transformer_.set_abort_callback(fn, userdata);
 }
 void Qwen3TTS::clear_abort_callback() {
+    abort_cb_      = nullptr;
+    abort_cb_data_ = nullptr;
     if (transformer_loaded_) transformer_.clear_abort_callback();
 }
 
@@ -1193,9 +1207,9 @@ void Qwen3TTS::set_audio_chunk_callback(tts_audio_chunk_callback_t cb, int32_t c
 int32_t Qwen3TTS::get_embedding_dim() const {
     if (encoder_loaded_) {
         int32_t d = audio_encoder_.get_config().embedding_dim;
-        return (d > 0) ? d : 1024;
+        return (d > 0) ? d : speaker_embedding_dim_;
     }
-    return 1024;
+    return speaker_embedding_dim_;
 }
 
 // --- synthesize_internal ---------------------------------------------------
@@ -1344,6 +1358,9 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
             return result;
         }
         transformer_loaded_ = true;
+        if (abort_cb_) {
+            transformer_.set_abort_callback(abort_cb_, abort_cb_data_);
+        }
     }
     transformer_.clear_kv_cache();
 
@@ -1510,6 +1527,14 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples, int
             if (num_channels == 0) {
                 fprintf(stderr, "ERROR: WAV fmt chunk missing or corrupt: %s\n", path.c_str());
                 fclose(f); return false;
+            }
+            // Reject absurdly large data chunks (DoS guard — ~10 min mono 16-bit @ 48 kHz).
+            constexpr uint32_t k_max_data_bytes = 64u * 1024u * 1024u;
+            if (chunk_size > k_max_data_bytes) {
+                fprintf(stderr, "ERROR: WAV data chunk too large (%u bytes): %s\n",
+                        chunk_size, path.c_str());
+                fclose(f);
+                return false;
             }
             if (audio_format == 1 && bits_per_sample == 16) {
                 int n = (int)(chunk_size / (2u * num_channels));
