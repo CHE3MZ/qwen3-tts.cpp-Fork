@@ -32,80 +32,51 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # ─────────────────────────────────────────────
-      # FIXED MSVC SETUP (DO NOT PIN TOOLSET)
-      # ─────────────────────────────────────────────
-      - name: Set up MSVC environment
+      - name: Setup MSVC (fixed)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          toolset: latest
 
-      # ─────────────────────────────────────────────
-      # CUDA INSTALL / DETECTION
-      # ─────────────────────────────────────────────
-      - name: Setup CUDA Toolkit (preinstalled or install fallback)
+      - name: Setup CUDA Toolkit
         shell: pwsh
         run: |
-          Write-Host "Checking for existing nvcc..."
-
           $nvcc = Get-Command nvcc -ErrorAction SilentlyContinue
 
           if ($nvcc) {
-            Write-Host "CUDA already available: $($nvcc.Source)"
-            nvcc --version
-
             $cudaPath = Split-Path (Split-Path $nvcc.Source)
-
             echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
             echo "$cudaPath\bin" >> $env:GITHUB_PATH
-
             exit 0
           }
 
-          Write-Host "CUDA not found. Installing CUDA 12.8..."
-
           Invoke-WebRequest `
             -Uri "https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe" `
-            -OutFile cuda_installer.exe
+            -OutFile cuda.exe
 
-          Start-Process -FilePath cuda_installer.exe `
-            -ArgumentList "-s nvcc_12.8 cudart_12.8" `
-            -Wait
+          Start-Process cuda.exe -ArgumentList "-s nvcc_12.8 cudart_12.8" -Wait
 
-          $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
-
-          $cudaDir = Get-ChildItem $cudaBase -Directory |
+          $cudaPath = Get-ChildItem "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" |
             Sort-Object Name -Descending |
             Select-Object -First 1
 
-          $cudaPath = $cudaDir.FullName
-
-          Write-Host "CUDA installed at: $cudaPath"
+          $cudaPath = $cudaPath.FullName
 
           echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
           echo "$cudaPath\bin" >> $env:GITHUB_PATH
 
-          & "$cudaPath\bin\nvcc.exe" --version
-
-      # ─────────────────────────────────────────────
-      # CUDA + MSVC COMPAT FIX (IMPORTANT)
-      # ─────────────────────────────────────────────
+      # ✅ FIX: CUDA + MSVC compatibility workaround
       - name: CUDA compatibility fix
         shell: pwsh
         run: |
           echo "CUDAHOSTCXX=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe" >> $env:GITHUB_ENV
           echo "CMAKE_CUDA_FLAGS=--allow-unsupported-compiler" >> $env:GITHUB_ENV
 
-      # ─────────────────────────────────────────────
-      # GGML CONFIG (CUDA)
-      # ─────────────────────────────────────────────
-      - name: Configure GGML with CUDA
+      - name: Configure GGML (CUDA)
         shell: cmd
         run: >
           cmake -S ggml -B ggml\build -G Ninja
@@ -115,16 +86,10 @@ jobs:
           -DCUDAToolkit_ROOT="%CUDAToolkit_ROOT%"
           -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
 
-      # ─────────────────────────────────────────────
-      # BUILD GGML
-      # ─────────────────────────────────────────────
       - name: Build GGML
         shell: cmd
         run: cmake --build ggml\build --config Release -j 4
 
-      # ─────────────────────────────────────────────
-      # BUILD PROJECT
-      # ─────────────────────────────────────────────
       - name: Configure project
         shell: cmd
         run: >
@@ -136,29 +101,23 @@ jobs:
         shell: cmd
         run: cmake --build build-release --config Release -j 4
 
-      # ─────────────────────────────────────────────
-      # PACKAGE
-      # ─────────────────────────────────────────────
-      - name: Package artifact
+      - name: Package
         shell: pwsh
         run: |
-          $out = "dist-cuda-win"
-          New-Item -ItemType Directory -Path $out -Force | Out-Null
-          New-Item -ItemType Directory -Path "$out\include" -Force | Out-Null
+          $out="dist-cuda"
+          New-Item -ItemType Directory -Force $out
+          New-Item -ItemType Directory -Force "$out/include"
 
-          Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
-          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
-          Get-ChildItem build-release\ggml*.dll      | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
-          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3-tts-cli.exe $out -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll $out -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll | Copy-Item -Destination $out -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out/include/"
 
-      # ─────────────────────────────────────────────
-      # UPLOAD
-      # ─────────────────────────────────────────────
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: qwen3-tts-cuda-windows-x64
-          path: dist-cuda-win/
+          name: qwen3-tts-cuda-windows
+          path: dist-cuda/
           retention-days: 30
 
 # ──────────────────────────────────────────────────────────────────────────────
