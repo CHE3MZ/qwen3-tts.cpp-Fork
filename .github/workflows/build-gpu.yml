@@ -126,7 +126,7 @@ jobs:
   build-metal:
     name: Metal (macOS)
     if: ${{ github.event.inputs.backend == 'metal' || github.event.inputs.backend == 'all' }}
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Checkout (with submodules)
