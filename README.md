@@ -132,7 +132,7 @@ For 1.7B, talker hidden=2048 is projected to code predictor hidden=1024 via `sma
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-m, --model <dir>` | — | Model directory with GGUF files |
+| `-m, --model <dir|file>` | — | Model directory with GGUF files, or direct path to a `.gguf` TTS model file |
 | `-t, --text <text>` | — | Text to synthesize |
 | `-o, --output <file>` | `output.wav` | Output WAV path |
 | `-r, --reference <file>` | — | Reference audio for voice cloning |

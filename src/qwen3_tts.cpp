@@ -211,70 +211,87 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     decoder_loaded_     = false;
     encoder_loaded_     = false;
 
-    // ---- Locate TTS model file (supports 0.6b and 1.7b) ----------------
-    // Priority: q8_0 > f16, 1.7b > 0.6b; also handles q5_k, q6_k, q4_k, q3_k, q2_k
-    const char * candidates[] = {
-        "qwen3-tts-1.7b-q8_0.gguf",
-        "qwen3-tts-1.7b-q6_k.gguf",
-        "qwen3-tts-1.7b-q5_k.gguf",
-        "qwen3-tts-1.7b-q4_k.gguf",
-        "qwen3-tts-1.7b-q3_k.gguf",
-        "qwen3-tts-1.7b-q2_k.gguf",
-        "qwen3-tts-1.7b-f16.gguf",
-        "qwen3-tts-0.6b-q8_0.gguf",
-        "qwen3-tts-0.6b-q6_k.gguf",
-        "qwen3-tts-0.6b-q5_k.gguf",
-        "qwen3-tts-0.6b-q4_k.gguf",
-        "qwen3-tts-0.6b-q3_k.gguf",
-        "qwen3-tts-0.6b-q2_k.gguf",
-        "qwen3-tts-0.6b-f16.gguf",
-        // Generic fallback pattern
-        "qwen3-tts-q8_0.gguf",
-        "qwen3-tts-q6_k.gguf",
-        "qwen3-tts-q5_k.gguf",
-        "qwen3-tts-q4_k.gguf",
-        "qwen3-tts-q3_k.gguf",
-        "qwen3-tts-q2_k.gguf",
-        "qwen3-tts-f16.gguf",
-        nullptr
-    };
-    std::string tts_path;
-    for (int i = 0; candidates[i]; ++i) {
-        std::string p = model_dir + "/" + candidates[i];
-        if (FILE * f = fopen(p.c_str(), "rb")) {
-            fclose(f);
-            tts_path = p;
-            break;
+    // ---- Resolve TTS and tokenizer paths --------------------------------
+    // Accepts either a directory (auto-selects best GGUF) or a direct .gguf file path.
+    {
+        auto ends_with_gguf = [](const std::string & s) {
+            return s.size() >= 5 && s.compare(s.size() - 5, 5, ".gguf") == 0;
+        };
+
+        if (ends_with_gguf(model_dir) && [&]{ FILE*f=fopen(model_dir.c_str(),"rb"); if(f){fclose(f);return true;} return false; }()) {
+            // Direct .gguf file path — use it directly, find tokenizer alongside it
+            tts_model_path_ = model_dir;
+            size_t slash = model_dir.find_last_of("/\\");
+            const std::string dir = (slash == std::string::npos) ? "." : model_dir.substr(0, slash);
+            const char * tok_cands[] = {
+                "qwen3-tts-tokenizer-f16.gguf",
+                "qwen3-tts-tokenizer-q8_0.gguf",
+                "qwen3-tts-tokenizer.gguf",
+                nullptr
+            };
+            for (int i = 0; tok_cands[i]; ++i) {
+                std::string p = dir + "/" + tok_cands[i];
+                FILE * ft = fopen(p.c_str(), "rb");
+                if (ft) { fclose(ft); decoder_model_path_ = p; break; }
+            }
+            if (decoder_model_path_.empty()) {
+                error_msg_ = "No tokenizer GGUF found alongside: " + model_dir;
+                return false;
+            }
+        } else {
+            // Directory — auto-select best available GGUF
+            // Priority: q8_0 > f16, 1.7b > 0.6b
+            const char * candidates[] = {
+                "qwen3-tts-1.7b-q8_0.gguf",
+                "qwen3-tts-1.7b-q6_k.gguf",
+                "qwen3-tts-1.7b-q5_k.gguf",
+                "qwen3-tts-1.7b-q4_k.gguf",
+                "qwen3-tts-1.7b-q3_k.gguf",
+                "qwen3-tts-1.7b-q2_k.gguf",
+                "qwen3-tts-1.7b-f16.gguf",
+                "qwen3-tts-0.6b-q8_0.gguf",
+                "qwen3-tts-0.6b-q6_k.gguf",
+                "qwen3-tts-0.6b-q5_k.gguf",
+                "qwen3-tts-0.6b-q4_k.gguf",
+                "qwen3-tts-0.6b-q3_k.gguf",
+                "qwen3-tts-0.6b-q2_k.gguf",
+                "qwen3-tts-0.6b-f16.gguf",
+                "qwen3-tts-q8_0.gguf",
+                "qwen3-tts-q6_k.gguf",
+                "qwen3-tts-q5_k.gguf",
+                "qwen3-tts-q4_k.gguf",
+                "qwen3-tts-q3_k.gguf",
+                "qwen3-tts-q2_k.gguf",
+                "qwen3-tts-f16.gguf",
+                nullptr
+            };
+            for (int i = 0; candidates[i]; ++i) {
+                std::string p = model_dir + "/" + candidates[i];
+                FILE * f = fopen(p.c_str(), "rb");
+                if (f) { fclose(f); tts_model_path_ = p; break; }
+            }
+            if (tts_model_path_.empty()) {
+                error_msg_ = "No TTS model GGUF found in: " + model_dir;
+                return false;
+            }
+
+            const char * tok_candidates[] = {
+                "qwen3-tts-tokenizer-f16.gguf",
+                "qwen3-tts-tokenizer-q8_0.gguf",
+                "qwen3-tts-tokenizer.gguf",
+                nullptr
+            };
+            for (int i = 0; tok_candidates[i]; ++i) {
+                std::string p = model_dir + "/" + tok_candidates[i];
+                FILE * f = fopen(p.c_str(), "rb");
+                if (f) { fclose(f); decoder_model_path_ = p; break; }
+            }
+            if (decoder_model_path_.empty()) {
+                error_msg_ = "No tokenizer/vocoder GGUF found in: " + model_dir;
+                return false;
+            }
         }
     }
-    if (tts_path.empty()) {
-        error_msg_ = "No TTS model GGUF found in: " + model_dir;
-        return false;
-    }
-
-    // ---- Locate tokenizer/vocoder model file ----------------------------
-    const char * tok_candidates[] = {
-        "qwen3-tts-tokenizer-f16.gguf",
-        "qwen3-tts-tokenizer-q8_0.gguf",
-        "qwen3-tts-tokenizer.gguf",
-        nullptr
-    };
-    std::string tok_path;
-    for (int i = 0; tok_candidates[i]; ++i) {
-        std::string p = model_dir + "/" + tok_candidates[i];
-        if (FILE * f = fopen(p.c_str(), "rb")) {
-            fclose(f);
-            tok_path = p;
-            break;
-        }
-    }
-    if (tok_path.empty()) {
-        error_msg_ = "No tokenizer/vocoder GGUF found in: " + model_dir;
-        return false;
-    }
-
-    tts_model_path_     = tts_path;
-    decoder_model_path_ = tok_path;
 
     const char * low_mem_env = std::getenv("QWEN3_TTS_LOW_MEM");
     low_mem_mode_ = low_mem_env && low_mem_env[0] != '\0' && low_mem_env[0] != '0';
@@ -282,10 +299,10 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
         fprintf(stderr, "  Low-memory mode enabled\n");
 
     // ---- Load text tokenizer -------------------------------------------
-    fprintf(stderr, "Loading TTS model: %s\n", tts_path.c_str());
+    fprintf(stderr, "Loading TTS model: %s\n", tts_model_path_.c_str());
     {
         GGUFLoader loader;
-        if (!loader.open(tts_path)) {
+        if (!loader.open(tts_model_path_)) {
             error_msg_ = "Failed to open TTS model: " + loader.get_error();
             return false;
         }
@@ -300,7 +317,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     }
 
     // ---- Load TTS transformer ------------------------------------------
-    if (!transformer_.load_model(tts_path)) {
+    if (!transformer_.load_model(tts_model_path_)) {
         error_msg_ = "Failed to load TTS transformer: " + transformer_.get_error();
         return false;
     }
@@ -321,8 +338,8 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
 
     // ---- Load vocoder (unless low-mem) ---------------------------------
     if (!low_mem_mode_) {
-        fprintf(stderr, "Loading vocoder: %s\n", tok_path.c_str());
-        if (!audio_decoder_.load_model(tok_path)) {
+        fprintf(stderr, "Loading vocoder: %s\n", decoder_model_path_.c_str());
+        if (!audio_decoder_.load_model(decoder_model_path_)) {
             error_msg_ = "Failed to load vocoder: " + audio_decoder_.get_error();
             return false;
         }
@@ -334,8 +351,8 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     // ---- Try to load Mimi encoder from tokenizer GGUF (for ICL) --------
     // This is optional — if it fails we just log and continue.
     {
-        fprintf(stderr, "Loading Mimi encoder from %s...\n", tok_path.c_str());
-        if (mimi_encoder_.load_model(tok_path)) {
+        fprintf(stderr, "Loading Mimi encoder from %s...\n", decoder_model_path_.c_str());
+        if (mimi_encoder_.load_model(decoder_model_path_)) {
             mimi_encoder_loaded_ = true;
             fprintf(stderr, "  Mimi encoder loaded (ICL voice cloning enabled)\n");
         } else {
@@ -348,7 +365,12 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
 
     // ---- Attempt to load generation_config.json ------------------------
     {
-        std::string gen_cfg_path = model_dir + "/generation_config.json";
+        // For a direct GGUF path, look for the JSON alongside the file.
+        // For a directory path, look inside the directory as before.
+        size_t slash = tts_model_path_.find_last_of("/\\");
+        const std::string search_dir = (slash == std::string::npos)
+                                       ? "." : tts_model_path_.substr(0, slash);
+        std::string gen_cfg_path = search_dir + "/generation_config.json";
         load_generation_config(gen_cfg_path); // silent failure is OK
     }
 

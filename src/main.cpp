@@ -9,7 +9,9 @@
 static void print_usage(const char * prog) {
     fprintf(stderr, "Usage: %s -m <model_dir> -t <text> [options]\n\n", prog);
     fprintf(stderr, "Core:\n");
-    fprintf(stderr, "  -m, --model <dir>             Model directory containing GGUF files (required)\n");
+    fprintf(stderr, "  -m, --model <dir|file>        Model directory containing GGUF files (required)\n");
+    fprintf(stderr, "                                Or a direct path to a .gguf TTS model file.\n");
+    fprintf(stderr, "                                Direct file: tokenizer is found alongside it.\n");
     fprintf(stderr, "  -t, --text <text>              Text to synthesize (required for synthesis)\n");
     fprintf(stderr, "  -o, --output <file>            Output WAV file (default: output.wav)\n");
     fprintf(stderr, "  --output-rate <hz>             Resample output to this rate (e.g. 48000).\n");
@@ -61,6 +63,8 @@ static void print_usage(const char * prog) {
     fprintf(stderr, "\nExamples:\n");
     fprintf(stderr, "  # Basic synthesis\n");
     fprintf(stderr, "  %s -m ./models -t \"Hello, world!\" -o hello.wav\n", prog);
+    fprintf(stderr, "  # Force a specific model file (e.g. F16 for better quality)\n");
+    fprintf(stderr, "  %s -m ./models/qwen3-tts-0.6b-f16.gguf -t \"Hello!\" -o hello.wav\n", prog);
     fprintf(stderr, "  # Voice clone\n");
     fprintf(stderr, "  %s -m ./models -t \"Hello!\" -r ref.wav -o clone.wav\n", prog);
     fprintf(stderr, "  # Voice clone with ICL (better quality)\n");
