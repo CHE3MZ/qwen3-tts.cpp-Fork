@@ -2,7 +2,6 @@
 <!-- Last updated: 2026-06-20 -->
 
 ## Repo
-`c:\Users\LEGION 5\Desktop\improve qwen\qwen3-tts.cpp-Fork`
 Branch: `main` — working tree clean, all changes committed.
 Build dir: `build-ninja\` (Ninja + clang-cl, auto-detected)
 
