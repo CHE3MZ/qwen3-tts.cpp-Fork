@@ -195,28 +195,45 @@ jobs:
       - name: Install SPIRV-Headers and Configure GGML with Vulkan
         shell: pwsh
         run: |
-          # Install SPIRV-Headers
-          $srcDir  = "$env:RUNNER_TEMP\SPIRV-Headers"
-          $instDir = "$env:RUNNER_TEMP\SPIRV-Headers-install"
-          if (-not (Test-Path "$instDir\cmake\SPIRV-HeadersConfig.cmake")) {
+          # Install SPIRV-Headers into a fixed known path
+          $instDir = "C:\spirv-headers-install"
+          $spirvConfig = "$instDir\share\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake"
+
+          if (-not (Test-Path $spirvConfig)) {
             Write-Host "Cloning SPIRV-Headers..."
+            $srcDir = "$env:RUNNER_TEMP\SPIRV-Headers"
             git clone --depth 1 --branch main https://github.com/KhronosGroup/SPIRV-Headers.git $srcDir
-            cmake -S $srcDir -B "$srcDir\build" -DCMAKE_INSTALL_PREFIX=$instDir -DCMAKE_BUILD_TYPE=Release
-            cmake --build "$srcDir\build" --config Release -j
-            cmake --install "$srcDir\build"
-          }
-          Write-Host "SPIRV-Headers install dir: $instDir"
-          if (-not (Test-Path "$instDir\cmake\SPIRV-HeadersConfig.cmake")) {
-            Write-Error "SPIRV-HeadersConfig.cmake not found after install"
-            exit 1
+            if ($LASTEXITCODE -ne 0) { Write-Error "git clone failed"; exit 1 }
+
+            Write-Host "Configuring SPIRV-Headers..."
+            & cmake -S $srcDir -B "$srcDir\build" -G Ninja `
+              -DCMAKE_BUILD_TYPE=Release `
+              "-DCMAKE_INSTALL_PREFIX=$instDir"
+            if ($LASTEXITCODE -ne 0) { Write-Error "SPIRV-Headers cmake configure failed"; exit 1 }
+
+            Write-Host "Building SPIRV-Headers..."
+            & cmake --build "$srcDir\build" --config Release
+            if ($LASTEXITCODE -ne 0) { Write-Error "SPIRV-Headers cmake build failed"; exit 1 }
+
+            Write-Host "Installing SPIRV-Headers..."
+            & cmake --install "$srcDir\build"
+            if ($LASTEXITCODE -ne 0) { Write-Error "SPIRV-Headers cmake install failed"; exit 1 }
           }
 
-          # Configure GGML — pass install root directly, no env var round-trip
-          cmake -S ggml -B ggml\build `
-            -G Ninja `
+          if (-not (Test-Path $spirvConfig)) {
+            Write-Error "SPIRV-HeadersConfig.cmake not found at expected path: $spirvConfig"
+            exit 1
+          }
+          Write-Host "SPIRV-Headers ready at: $instDir"
+
+          # Configure GGML with install prefix passed directly
+          $prefixPath = $instDir -replace '\\', '/'
+          Write-Host "Configuring GGML with CMAKE_PREFIX_PATH=$prefixPath"
+          & cmake -S ggml -B ggml\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_VULKAN=ON `
-            "-DCMAKE_PREFIX_PATH=$instDir"
+            "-DCMAKE_PREFIX_PATH=$prefixPath"
+          if ($LASTEXITCODE -ne 0) { Write-Error "GGML cmake configure failed"; exit 1 }
 
       - name: Build GGML
         shell: cmd
