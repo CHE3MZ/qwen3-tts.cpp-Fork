@@ -224,7 +224,17 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
             size_t slash = model_dir.find_last_of("/\\");
             const std::string dir = (slash == std::string::npos) ? "." : model_dir.substr(0, slash);
             const char * tok_cands[] = {
+                // Preferred: f16 vocoder (source is BF16, f32 adds nothing)
+                // Mimi priority: f32 > f16 > q8_0 (f32 = bit-exact ICL)
+                "qwen3-tts-tokenizer-f16-f32.gguf",
+                "qwen3-tts-tokenizer-f16-f16.gguf",
+                "qwen3-tts-tokenizer-f16-q8_0.gguf",
+                "qwen3-tts-tokenizer-f32-f32.gguf",
+                "qwen3-tts-tokenizer-f32-f16.gguf",
+                "qwen3-tts-tokenizer-f32-q8_0.gguf",
+                // Legacy single-tag names (backward compat)
                 "qwen3-tts-tokenizer-f16.gguf",
+                "qwen3-tts-tokenizer-f32.gguf",
                 "qwen3-tts-tokenizer-q8_0.gguf",
                 "qwen3-tts-tokenizer.gguf",
                 nullptr
@@ -276,7 +286,16 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
             }
 
             const char * tok_candidates[] = {
+                // Preferred: f16 vocoder, Mimi priority: f32 > f16 > q8_0
+                "qwen3-tts-tokenizer-f16-f32.gguf",
+                "qwen3-tts-tokenizer-f16-f16.gguf",
+                "qwen3-tts-tokenizer-f16-q8_0.gguf",
+                "qwen3-tts-tokenizer-f32-f32.gguf",
+                "qwen3-tts-tokenizer-f32-f16.gguf",
+                "qwen3-tts-tokenizer-f32-q8_0.gguf",
+                // Legacy single-tag names (backward compat)
                 "qwen3-tts-tokenizer-f16.gguf",
+                "qwen3-tts-tokenizer-f32.gguf",
                 "qwen3-tts-tokenizer-q8_0.gguf",
                 "qwen3-tts-tokenizer.gguf",
                 nullptr

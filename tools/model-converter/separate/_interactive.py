@@ -80,7 +80,14 @@ def mode_tokenizer(args: dict) -> None:
     token = get_token(args)
 
     tok_dir  = REPO_ROOT / "models" / "Qwen3-TTS-Tokenizer-12Hz"
-    out_file = REPO_ROOT / "models" / f"qwen3-tts-tokenizer-{tok_type}.gguf"
+    # Filename encodes both tok_type (vocoder) and mimi_type (Mimi encoder)
+    # so different precision combinations never collide.
+    # C++ auto-discovery knows all valid combinations.
+    # Examples:
+    #   tok=f16, mimi=f16  -> qwen3-tts-tokenizer-f16-f16.gguf
+    #   tok=f16, mimi=f32  -> qwen3-tts-tokenizer-f16-f32.gguf
+    #   tok=f16, mimi=q8_0 -> qwen3-tts-tokenizer-f16-q8_0.gguf
+    out_file = REPO_ROOT / "models" / f"qwen3-tts-tokenizer-{tok_type}-{mimi_type}.gguf"
 
     print(f"\n  Tokenizer type : {tok_type}")
     print(f"  Mimi precision : {mimi_type}")

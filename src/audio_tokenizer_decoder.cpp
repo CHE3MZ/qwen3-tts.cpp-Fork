@@ -51,18 +51,31 @@ void AudioTokenizerDecoder::normalize_codebooks() {
         int64_t codebook_dim = codebook->ne[0];
         int64_t codebook_size = codebook->ne[1];
         
-        ggml_fp16_t * cb_data    = (ggml_fp16_t *)codebook->data;
-        float       * usage_data = (float *)usage->data;
+        float * usage_data = (float *)usage->data;
         
-        for (int64_t emb_idx = 0; emb_idx < codebook_size; ++emb_idx) {
-            float u = usage_data[emb_idx];
-            if (u < epsilon) u = epsilon;
-            float inv_u = 1.0f / u;
-            
-            for (int64_t dim_idx = 0; dim_idx < codebook_dim; ++dim_idx) {
-                int64_t mem_idx = dim_idx + emb_idx * codebook_dim;
-                float val = ggml_fp16_to_fp32(cb_data[mem_idx]);
-                cb_data[mem_idx] = ggml_fp32_to_fp16(val * inv_u);
+        if (codebook->type == GGML_TYPE_F32) {
+            float * cb_data = (float *)codebook->data;
+            for (int64_t emb_idx = 0; emb_idx < codebook_size; ++emb_idx) {
+                float u = usage_data[emb_idx];
+                if (u < epsilon) u = epsilon;
+                float inv_u = 1.0f / u;
+                for (int64_t dim_idx = 0; dim_idx < codebook_dim; ++dim_idx) {
+                    int64_t mem_idx = dim_idx + emb_idx * codebook_dim;
+                    cb_data[mem_idx] *= inv_u;
+                }
+            }
+        } else {
+            // F16 (default) and any other type treated as F16
+            ggml_fp16_t * cb_data = (ggml_fp16_t *)codebook->data;
+            for (int64_t emb_idx = 0; emb_idx < codebook_size; ++emb_idx) {
+                float u = usage_data[emb_idx];
+                if (u < epsilon) u = epsilon;
+                float inv_u = 1.0f / u;
+                for (int64_t dim_idx = 0; dim_idx < codebook_dim; ++dim_idx) {
+                    int64_t mem_idx = dim_idx + emb_idx * codebook_dim;
+                    float val = ggml_fp16_to_fp32(cb_data[mem_idx]);
+                    cb_data[mem_idx] = ggml_fp32_to_fp16(val * inv_u);
+                }
             }
         }
     };

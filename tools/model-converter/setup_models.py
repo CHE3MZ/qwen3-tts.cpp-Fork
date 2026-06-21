@@ -207,8 +207,10 @@ def output_filename(variant: str, size: str, quant: str) -> str:
     suffix = {"base": "", "custom_voice": "-customvoice", "voice_design": "-voicedesign"}[variant]
     return f"qwen3-tts-{size}{suffix}-{quant}.gguf"
 
-def tokenizer_filename(quant: str) -> str:
-    return f"qwen3-tts-tokenizer-{quant}.gguf"
+def tokenizer_filename(tok_type: str, mimi_type: str) -> str:
+    # Both tok_type (vocoder) and mimi_type (Mimi encoder) in the filename
+    # so different precision combinations never collide.
+    return f"qwen3-tts-tokenizer-{tok_type}-{mimi_type}.gguf"
 
 
 # ---- Main wizard ------------------------------------------------
@@ -344,7 +346,7 @@ All models output 24 kHz mono audio.
     repo_id   = variant_info[repo_key]
     local_dir = MODELS_DIR / variant_info[local_key]
     out_tts   = MODELS_DIR / output_filename(chosen_variant, chosen_size, chosen_quant)
-    out_tok   = MODELS_DIR / tokenizer_filename("f16")  # tokenizer always f16 base
+    out_tok   = MODELS_DIR / tokenizer_filename("f16", chosen_mimi)
 
     print(f"""
   Model variant:     {chosen_variant}  ({variant_info['label']})
