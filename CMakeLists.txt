@@ -27,6 +27,14 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND WIN32)
     message(STATUS "Clang-cl: enabling -march=native for AVX2/AVX512")
 endif()
 
+# Suppress MSVC/clang-cl "unsafe function" deprecation warnings for standard
+# C functions (fopen, sscanf, strncpy, getenv, etc.).
+# This matches the approach used by llama.cpp and whisper.cpp.
+# These are Windows-only warnings with no cross-platform safety value.
+if(WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 # KV cache precision option
 # F32 KV cache gives bit-exact non-streaming output matching Python float32 inference.
 # F16 (default) uses half the memory but may differ by 1 frame at EOS boundary.
