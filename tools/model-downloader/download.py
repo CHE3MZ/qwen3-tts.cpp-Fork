@@ -94,20 +94,33 @@ def check_deps() -> None:
         print("  Or with uv:  uv pip install huggingface_hub")
         sys.exit(1)
 
+    # Enable hf_transfer for faster downloads if available.
+    # hf_transfer is a Rust-based downloader that can be significantly
+    # faster than the default Python HTTP client, especially on fast connections.
+    try:
+        import hf_transfer  # noqa: F401
+        import os
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+    except ImportError:
+        pass  # not installed -- use default downloader, still works fine
+
 # ── HuggingFace download with retry ─────────────────────────────────────────
 def hf_download_file(repo: str, filename: str,
                      dest: Path, token: str | None) -> None:
+    import warnings
     from huggingface_hub import hf_hub_download
     delay = 5.0
     for attempt in range(1, 6):
         try:
-            hf_hub_download(
-                repo_id=repo,
-                filename=filename,
-                local_dir=str(dest),
-                token=token,
-                resume_download=True,
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")   # suppress resume_download FutureWarning
+                hf_hub_download(
+                    repo_id=repo,
+                    filename=filename,
+                    local_dir=str(dest),
+                    token=token,
+                    resume_download=True,
+                )
             return
         except Exception as e:
             msg = str(e)
@@ -311,6 +324,8 @@ def main() -> None:
         print()
         print(c(f"  Downloading: {model_file}", BOLD))
         print(c(f"  From: huggingface.co/{HF_REPO}", DIM))
+        print(c("  Note: the progress bar may appear frozen for up to 30 seconds", DIM))
+        print(c("        at the start or between chunks -- this is normal.", DIM))
         hf_download_file(HF_REPO, model_file, MODELS_DIR, token)
         print(c(f"  [done] {model_file}", GREEN))
 
@@ -318,8 +333,21 @@ def main() -> None:
         print()
         print(c(f"  Downloading: {tok_file}", BOLD))
         print(c(f"  From: huggingface.co/{HF_REPO}", DIM))
+        print(c("  Note: the progress bar may appear frozen for up to 30 seconds", DIM))
+        print(c("        at the start or between chunks -- this is normal.", DIM))
         hf_download_file(HF_REPO, tok_file, MODELS_DIR, token)
         print(c(f"  [done] {tok_file}", GREEN))
+
+    # ── Cleanup HuggingFace cache folder ─────────────────────────────────────
+    # hf_hub_download creates a .cache/ folder inside the local_dir for
+    # metadata and partial download tracking. Safe to remove after completion.
+    cache_dir = MODELS_DIR / ".cache"
+    if cache_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(cache_dir)
+        except Exception:
+            pass  # non-fatal — user can delete manually if needed
 
     # ── Usage hint ───────────────────────────────────────────────────────────
     print()
