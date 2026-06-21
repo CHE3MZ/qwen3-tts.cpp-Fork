@@ -61,15 +61,16 @@ MODEL_VARIANTS = {
 TOKENIZER_REPO    = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 TOKENIZER_LOCAL   = "Qwen3-TTS-Tokenizer-12Hz"
 
-# NOTE: only f16 and q8_0 are supported by the gguf Python library.
+# NOTE: only f16, f32, and q8_0 are supported by the gguf Python library.
 # K-quants (q6_k through q2_k) raise NotImplementedError in gguf.quants.quantize()
 # and silently fall back to F16, producing misleadingly large files.
 # They are commented out until the converter supports them natively.
 # TODO: implement K-quant byte layout in scripts/convert_tts_to_gguf.py, then
 #       uncomment the entries below.
 QUANT_OPTIONS = {
-    "f16":   "F16   — Full precision (~1.75 GB / 0.6B). Best quality, largest file.",
-    "q8_0":  "Q8_0  — 8-bit quantized (~1.0 GB / 0.6B). Virtually lossless quality. [Recommended]",
+    "f16":   "F16  — Full precision (~1.75 GB / 0.6B). Best quality. [Recommended]",
+    "f32":   "F32  — Double size (~3.5 GB / 0.6B), same quality as F16 (source weights are BF16).",
+    "q8_0":  "Q8_0 — 8-bit quantized (~1.0 GB / 0.6B). Virtually lossless quality.",
     # "q6_k":  "Q6_K  — 6-bit K-quant (~0.75 GB / 0.6B). Excellent quality.",
     # "q5_k":  "Q5_K  — 5-bit K-quant (~0.65 GB / 0.6B). Very good quality.",
     # "q4_k":  "Q4_K  — 4-bit K-quant (~0.55 GB / 0.6B). Good quality, smallest practical size.",
@@ -287,10 +288,10 @@ All models output 24 kHz mono audio.
         print(f"  {key:6s}  {desc}")
     print()
     if non_interactive:
-        chosen_quant = "q8_0"
+        chosen_quant = "f16"
         print(f"  [non-interactive] Using: {chosen_quant}")
     else:
-        chosen_quant = ask("Select quantization", list(QUANT_OPTIONS.keys()), default="q8_0")
+        chosen_quant = ask("Select quantization", list(QUANT_OPTIONS.keys()), default="f16")
     print(f"  -> {chosen_quant}")
 
     # ---- Step 4: Mimi encoder precision --------------------------
@@ -437,7 +438,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--non-interactive", "-y",
         action="store_true",
-        help="Use defaults without prompting (0.6B Base, Q8_0, F32 Mimi)"
+        help="Use defaults without prompting (0.6B Base, F16, F32 Mimi)"
     )
     parser.add_argument(
         "--hf-token",
