@@ -49,10 +49,13 @@ def run_convert(cmd: list[str]) -> None:
         print(f"\n[error] Conversion failed (exit {r.returncode})"); sys.exit(r.returncode)
 
 def get_token(args: dict) -> str | None:
-    raw = args.get("hf_token") or input("\n  HuggingFace token (blank if not needed): ").strip()
+    if "hf_token" in args:
+        raw = args["hf_token"]
+    else:
+        raw = input("\n  HuggingFace token (blank if not needed): ").strip()
     return None if not raw or raw.lower() in ("none", "null") else raw
 
-
+def mode_tokenizer(args: dict) -> None:
     print()
     print("=" * 60)
     print("  qwen3-tts.cpp -- Tokenizer / Vocoder Downloader")
