@@ -67,3 +67,6 @@ Qwen3-TTS-reference/
 qwen3-tts-vulkan-windows-x64/
 qwen3-tts-vulkan-windows/
 qwen3-tts-metal-macos/
+build-vulkan/
+build-metal/
+build-cuda/

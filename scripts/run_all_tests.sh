@@ -67,8 +67,8 @@ log "============================================"
 log ""
 
 log "--- Test 1.1: Tokenizer ---"
-if [[ -x "./build/test_tokenizer" ]]; then
-    output=$(timeout 60 ./build/test_tokenizer --model models/qwen3-tts-0.6b-f16.gguf 2>&1)
+if [[ -x "./build-ninja/test_tokenizer" ]]; then
+    output=$(timeout 60 ./build-ninja/test_tokenizer --model models/qwen3-tts-0.6b-f16.gguf 2>&1)
     rc=$?
     if [[ $rc -eq 0 ]] && echo "$output" | grep -q "All tests passed"; then
         pass "Tokenizer test"
@@ -82,7 +82,7 @@ fi
 log ""
 
 log "--- Test 1.2: Encoder ---"
-if [[ -x "./build/test_encoder" ]]; then
+if [[ -x "./build-ninja/test_encoder" ]]; then
     if [[ ! -f "reference/debug/audio_resampled.bin" ]] && command -v python3 >/dev/null 2>&1; then
         mkdir -p reference/debug
         prep_output=$(python3 - <<'PY' 2>&1
@@ -110,7 +110,7 @@ PY
         fi
     fi
 
-    output=$(timeout 120 ./build/test_encoder --tokenizer models/qwen3-tts-0.6b-f16.gguf --audio clone.wav --reference reference/ref_audio_embedding.bin 2>&1)
+    output=$(timeout 120 ./build-ninja/test_encoder --tokenizer models/qwen3-tts-0.6b-f16.gguf --audio clone.wav --reference reference/ref_audio_embedding.bin 2>&1)
     rc=$?
     l2=$(echo "$output" | grep "L2 distance:" | head -1 | awk '{print $3}')
     if [[ $rc -eq 0 ]] && echo "$output" | grep -q "All tests passed"; then
@@ -125,8 +125,8 @@ fi
 log ""
 
 log "--- Test 1.3: Transformer ---"
-if [[ -x "./build/test_transformer" ]]; then
-    output=$(timeout 180 ./build/test_transformer --model models/qwen3-tts-0.6b-f16.gguf --ref-dir reference/ 2>&1)
+if [[ -x "./build-ninja/test_transformer" ]]; then
+    output=$(timeout 180 ./build-ninja/test_transformer --model models/qwen3-tts-0.6b-f16.gguf --ref-dir reference/ 2>&1)
     rc=$?
     if [[ $rc -eq 0 ]] && echo "$output" | grep -q "All tests passed"; then
         pass "Transformer test (generates speech codes)"
@@ -140,8 +140,8 @@ fi
 log ""
 
 log "--- Test 1.4: Decoder ---"
-if [[ -x "./build/test_decoder" ]]; then
-    output=$(timeout 180 ./build/test_decoder --tokenizer models/qwen3-tts-tokenizer-f16.gguf --codes reference/speech_codes.bin --reference reference/decoded_audio.bin 2>&1)
+if [[ -x "./build-ninja/test_decoder" ]]; then
+    output=$(timeout 180 ./build-ninja/test_decoder --tokenizer models/qwen3-tts-tokenizer-f16-f16.gguf --codes reference/det_speech_codes.bin --reference reference/det_decoded_audio.bin 2>&1)
     rc=$?
     if [[ $rc -eq 0 ]] && echo "$output" | grep -q "Decoded.*samples"; then
         samples=$(echo "$output" | grep "PASS: Decoded" | sed 's/.*Decoded \([0-9]*\) samples.*/\1/')
@@ -152,6 +152,36 @@ if [[ -x "./build/test_decoder" ]]; then
     fi
 else
     skip "Decoder test (binary not found)"
+fi
+log ""
+
+log "--- Test 1.5: Batch Inference ---"
+if [[ -x "./build-ninja/test_batch" ]] && [[ -f "models/qwen3-tts-0.6b-f16.gguf" ]]; then
+    output=$(timeout 180 ./build-ninja/test_batch --model models/qwen3-tts-0.6b-f16.gguf --max-len 32 2>&1)
+    rc=$?
+    if [[ $rc -eq 0 ]] && echo "$output" | grep -q "batch tests passed"; then
+        pass "Batch inference test"
+    else
+        fail "Batch inference test (exit code: $rc)"
+        log_output_tail "$output"
+    fi
+else
+    skip "Batch inference test (binary or model not found)"
+fi
+log ""
+
+log "--- Test 1.6: VQ Codebook ---"
+if [[ -x "./build-ninja/test_codebook" ]] && [[ -f "models/qwen3-tts-tokenizer-f16-f16.gguf" ]]; then
+    output=$(timeout 60 ./build-ninja/test_codebook --tokenizer models/qwen3-tts-tokenizer-f16-f16.gguf 2>&1)
+    rc=$?
+    if [[ $rc -eq 0 ]] && echo "$output" | grep -q "PASS"; then
+        pass "VQ codebook test"
+    else
+        fail "VQ codebook test (exit code: $rc)"
+        log_output_tail "$output"
+    fi
+else
+    skip "VQ codebook test (binary or tokenizer not found)"
 fi
 log ""
 
@@ -170,7 +200,7 @@ run_cli_test() {
     log "--- $name ---"
     rm -f "$output_file"
     
-    output=$(timeout 300 ./build/qwen3-tts-cli "$@" -o "$output_file" 2>&1)
+    output=$(timeout 300 ./build-ninja/qwen3-tts-cli "$@" -o "$output_file" 2>&1)
     rc=$?
     if [[ $rc -eq 0 ]]; then
         if check_wav "$output_file"; then
@@ -185,7 +215,7 @@ run_cli_test() {
     return 1
 }
 
-if [[ -x "./build/qwen3-tts-cli" ]] && [[ -f "models/qwen3-tts-0.6b-f16.gguf" ]]; then
+if [[ -x "./build-ninja/qwen3-tts-cli" ]] && [[ -f "models/qwen3-tts-0.6b-f16.gguf" ]]; then
     run_cli_test "F16 basic synthesis" "$TEST_OUTPUT_DIR/test_f16_basic.wav" \
         -m models -t "Hello world" --max-tokens 100 || true
     log ""
@@ -224,7 +254,7 @@ log "SECTION 4: Input Text Variations"
 log "============================================"
 log ""
 
-if [[ -x "./build/qwen3-tts-cli" ]]; then
+if [[ -x "./build-ninja/qwen3-tts-cli" ]]; then
     run_cli_test "Short text (Hi)" "$TEST_OUTPUT_DIR/test_short.wav" \
         -m models -t "Hi" -r clone.wav --max-tokens 50 || true
     log ""

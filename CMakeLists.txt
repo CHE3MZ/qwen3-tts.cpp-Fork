@@ -395,7 +395,7 @@ install(FILES
 # CTest support
 enable_testing()
 add_test(NAME tokenizer_test
-    COMMAND test_tokenizer
+    COMMAND test_tokenizer --model models/qwen3-tts-0.6b-f16.gguf
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 add_test(NAME encoder_test
@@ -403,17 +403,24 @@ add_test(NAME encoder_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 add_test(NAME transformer_test
-    COMMAND test_transformer
+    COMMAND test_transformer --model models/qwen3-tts-0.6b-f16.gguf
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 add_test(NAME decoder_test
-    COMMAND test_decoder
+    COMMAND test_decoder --tokenizer models/qwen3-tts-tokenizer-f16-f16.gguf --codes reference/det_speech_codes.bin --reference reference/det_decoded_audio.bin
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
-
+add_test(NAME batch_test
+    COMMAND test_batch --model models/qwen3-tts-0.6b-f16.gguf --max-len 32
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+add_test(NAME codebook_test
+    COMMAND test_codebook --tokenizer models/qwen3-tts-tokenizer-f16-f16.gguf
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
 add_test(NAME mimi_encoder_test
     COMMAND test_mimi_encoder
-        --tokenizer models/qwen3-tts-tokenizer-f16.gguf
+        --tokenizer models/qwen3-tts-tokenizer-f16-f16.gguf
         --audio clone.wav
         --ref-codes reference/mimi_enc_py_codes.bin
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

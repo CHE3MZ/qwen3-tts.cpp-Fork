@@ -5,16 +5,25 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <vector>
 #include <cmath>
 #include <map>
 #include <string>
 
-int main() {
+int main(int argc, char ** argv) {
+    // Accept optional --tokenizer flag; fall back to most likely path
+    std::string tokenizer_path = "models/qwen3-tts-tokenizer-f16-f16.gguf";
+    for (int i = 1; i < argc - 1; ++i) {
+        if (strcmp(argv[i], "--tokenizer") == 0) {
+            tokenizer_path = argv[i + 1];
+        }
+    }
+
     // Load GGUF
     qwen3_tts::GGUFLoader loader;
-    if (!loader.open("models/qwen3-tts-tokenizer-f16.gguf")) {
+    if (!loader.open(tokenizer_path)) {
         fprintf(stderr, "Failed to open GGUF\n");
         return 1;
     }
@@ -53,7 +62,7 @@ int main() {
     
     ggml_backend_buffer_t buffer = nullptr;
     std::string error;
-    if (!qwen3_tts::load_tensor_data_from_file("models/qwen3-tts-tokenizer-f16.gguf", 
+    if (!qwen3_tts::load_tensor_data_from_file(tokenizer_path, 
                                                 loader.get_ctx(), ctx, tensors, buffer, error)) {
         fprintf(stderr, "Failed to load tensor data: %s\n", error.c_str());
         return 1;
@@ -132,11 +141,43 @@ int main() {
         printf("%.4f ", row_data[i]);
     }
     printf("\n");
-    
+
+    // Verify ggml_get_rows produced a valid (non-zero, finite) embedding
+    bool all_finite = true;
+    bool all_zero   = true;
+    for (int i = 0; i < 10; ++i) {
+        if (!std::isfinite(row_data[i])) { all_finite = false; break; }
+        if (row_data[i] != 0.0f)          all_zero   = false;
+    }
+    int pass = 0, fail = 0;
+    if (all_finite && !all_zero) {
+        printf("PASS: codebook row is finite and non-zero\n");
+        ++pass;
+    } else {
+        printf("FAIL: codebook row is %s%s\n",
+               !all_finite ? "non-finite " : "",
+               all_zero    ? "all-zeros" : "");
+        ++fail;
+    }
+
+    // Verify codebook shape matches expected dimensions
+    if (codebook_meta->ne[0] == 256 && codebook_meta->ne[1] == 2048) {
+        printf("PASS: codebook shape [256, 2048] correct\n");
+        ++pass;
+    } else {
+        printf("FAIL: codebook shape [%lld, %lld] unexpected\n",
+               (long long)codebook_meta->ne[0], (long long)codebook_meta->ne[1]);
+        ++fail;
+    }
+
+    printf("\n  +----------------------------+\n");
+    printf("  |  PASS: %-3d  FAIL: %-3d      |\n", pass, fail);
+    printf("  +----------------------------+\n\n");
+
     ggml_backend_free(backend);
     ggml_backend_buffer_free(buffer);
     ggml_free(ctx);
     ggml_free(ctx_compute);
-    
-    return 0;
+
+    return (fail > 0) ? 1 : 0;
 }
