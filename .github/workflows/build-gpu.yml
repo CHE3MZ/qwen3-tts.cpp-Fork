@@ -192,6 +192,18 @@ jobs:
           echo "VULKAN_SDK=$env:VULKAN_SDK" >> $env:GITHUB_ENV
           echo "$env:VULKAN_SDK\Bin" >> $env:GITHUB_PATH
 
+      - name: Find SPIRV-Headers in Vulkan SDK
+        shell: pwsh
+        run: |
+          $spirvDir = Join-Path $env:VULKAN_SDK "SPIRV-Headers\cmake"
+          if (Test-Path $spirvDir) {
+            echo "Found SPIRV-Headers at: $spirvDir"
+            echo "SPIRV-Headers_DIR=$spirvDir" >> $env:GITHUB_ENV
+          } else {
+            Write-Error "SPIRV-Headers not found in Vulkan SDK at $spirvDir"
+            exit 1
+          }
+
       - name: Configure GGML with Vulkan
         shell: cmd
         run: >
