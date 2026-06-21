@@ -192,6 +192,20 @@ jobs:
           echo "VULKAN_SDK=$env:VULKAN_SDK" >> $env:GITHUB_ENV
           echo "$env:VULKAN_SDK\Bin" >> $env:GITHUB_PATH
 
+      - name: Install SPIRV-Headers
+        shell: pwsh
+        run: |
+          $srcDir = "$env:RUNNER_TEMP\SPIRV-Headers"
+          $instDir = "$env:RUNNER_TEMP\SPIRV-Headers-install"
+          if (-not (Test-Path "$instDir\cmake\SPIRV-HeadersConfig.cmake")) {
+            Write-Host "Downloading and building SPIRV-Headers..."
+            git clone --depth 1 --branch main https://github.com/KhronosGroup/SPIRV-Headers.git $srcDir
+            cmake -S $srcDir -B "$srcDir\build" -DCMAKE_INSTALL_PREFIX=$instDir -DCMAKE_BUILD_TYPE=Release
+            cmake --build "$srcDir\build" --config Release -j
+            cmake --install "$srcDir\build"
+          }
+          echo "SPIRV-Headers_DIR=$instDir\cmake" >> $env:GITHUB_ENV
+
       - name: Configure GGML with Vulkan
         shell: cmd
         run: >
