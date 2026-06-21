@@ -163,7 +163,39 @@ def check_python_deps() -> None:
         if not ask_yes_no("Continue anyway (will fail if packages are truly missing)?", default=False):
             sys.exit(1)
 
-def output_filename(variant: str, size: str, quant: str) -> str:
+def hf_download_with_retry(repo_id: str, local_dir: str, token: Optional[str],
+                           allow_patterns: Optional[list] = None,
+                           max_retries: int = 5) -> None:
+    """snapshot_download with exponential-backoff retry for flaky connections."""
+    import time
+    from huggingface_hub import snapshot_download
+
+    delay = 5.0
+    for attempt in range(1, max_retries + 1):
+        try:
+            snapshot_download(
+                repo_id=repo_id,
+                local_dir=local_dir,
+                token=token,
+                allow_patterns=allow_patterns,
+                resume_download=True,
+            )
+            return
+        except Exception as e:
+            msg = str(e)
+            is_network = any(k in msg for k in (
+                "ConnectionReset", "ConnectionError", "ProtocolError",
+                "10054", "RemoteDisconnected", "LocalEntryNotFound",
+            ))
+            if attempt == max_retries or not is_network:
+                raise
+            print(f"\n  [warn] Download interrupted (attempt {attempt}/{max_retries}): {type(e).__name__}")
+            print(f"         Retrying in {delay:.0f}s... (resume_download=True, progress preserved)")
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)  # cap at 60s
+
+
+
     return f"qwen3-tts-{size}-{quant}.gguf"
 
 def tokenizer_filename(quant: str) -> str:
@@ -331,13 +363,7 @@ All models output 24 kHz mono audio.
 
     if need_tts_download:
         print(f"\n  Downloading {repo_id} -> {local_dir} ...")
-        from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id=repo_id,
-            local_dir=str(local_dir),
-            token=token,
-            resume_download=True,
-        )
+        hf_download_with_retry(repo_id, str(local_dir), token)
     else:
         print(f"\n  TTS model already present at {local_dir} — skipping download.")
         print("  (Delete the directory and re-run to force re-download.)")
@@ -345,13 +371,7 @@ All models output 24 kHz mono audio.
     # 7b: Download tokenizer
     if need_tok_download:
         print(f"\n  Downloading {TOKENIZER_REPO} -> {tok_local_dir} ...")
-        from huggingface_hub import snapshot_download
-        snapshot_download(
-            repo_id=TOKENIZER_REPO,
-            local_dir=str(tok_local_dir),
-            token=token,
-            resume_download=True,
-        )
+        hf_download_with_retry(TOKENIZER_REPO, str(tok_local_dir), token)
     else:
         print(f"\n  Tokenizer already present at {tok_local_dir} — skipping download.")
 
