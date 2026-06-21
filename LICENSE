@@ -19,3 +19,56 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+THIRD-PARTY ACKNOWLEDGEMENTS
+
+This project is a fork of and builds upon the following works:
+
+1. qwen3-tts.cpp (original)
+   Author:  predict-woo
+   Source:  https://github.com/predict-woo/qwen3-tts.cpp
+   License: No license specified by upstream author.
+            This fork was created from the publicly available source with the
+            intent of open-source distribution under the MIT License above.
+            Original authorship is acknowledged and credited here.
+
+2. Qwen3-TTS Model Weights
+   Author:  Alibaba Cloud — Qwen Team
+   Source:  https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+            https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base
+            https://github.com/QwenLM/Qwen3-TTS
+   License: Apache License 2.0
+            https://www.apache.org/licenses/LICENSE-2.0
+   Note:    The model weights themselves are NOT included in this repository.
+            They must be downloaded separately and are subject to the
+            Apache 2.0 license terms set by Alibaba Cloud.
+
+3. GGML
+   Author:  Georgi Gerganov and the ggml authors
+   Source:  https://github.com/ggml-org/ggml
+   License: MIT License
+            Copyright (c) 2023-2026 The ggml authors
+            Full license text: ggml/LICENSE
+
+4. WavTokenizer (vocoder architecture reference)
+   Author:  Shengpeng Ji et al.
+   Source:  https://github.com/jishengpeng/WavTokenizer
+   Note:    The vocoder architecture implemented in this project is based on
+            the WavTokenizer design. No source code from WavTokenizer was
+            directly copied; the implementation is an independent C++/GGML
+            port derived from the model weights and architecture description.
+
+-------------------------------------------------------------------------------
+
+APACHE LICENSE 2.0 NOTICE (for Qwen3-TTS model weights)
+
+The Qwen3-TTS model weights are licensed under the Apache License, Version 2.0.
+You may obtain a copy of the Apache License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+When distributing or using the model weights (GGUF files converted from
+Qwen3-TTS), you must comply with the terms of the Apache License 2.0,
+including the requirement to retain attribution notices.
