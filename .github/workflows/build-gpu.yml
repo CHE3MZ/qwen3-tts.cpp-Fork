@@ -67,15 +67,20 @@ jobs:
           echo "$cudaPath\bin" >> $env:GITHUB_PATH
 
       - name: Configure GGML (CUDA)
-        shell: cmd
-        run: >
-          cmake -S ggml -B ggml\build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DGGML_CUDA=ON
-          -DGGML_CUDA_F16=ON
-          -DCUDAToolkit_ROOT="%CUDAToolkit_ROOT%"
-          -DCMAKE_CUDA_FLAGS="--allow-unsupported-compiler"
-          -DCMAKE_CUDA_HOST_COMPILER="%VCToolsInstallDir%\bin\Hostx64\x64\cl.exe"
+        shell: pwsh
+        run: |
+          # VS 18 (2026) is newer than CUDA 12.8 supports officially.
+          # Set CUDAFLAGS so nvcc uses --allow-unsupported-compiler during
+          # CMake's compiler identification step (before CMAKE_CUDA_FLAGS applies).
+          $env:CUDAFLAGS = "--allow-unsupported-compiler"
+          & cmake -S ggml -B ggml\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=ON `
+            -DGGML_CUDA_F16=ON `
+            "-DCUDAToolkit_ROOT=$env:CUDAToolkit_ROOT" `
+            "-DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler -Wno-deprecated-gpu-targets" `
+            "-DCMAKE_CUDA_HOST_COMPILER=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe"
+          if ($LASTEXITCODE -ne 0) { Write-Error "GGML CUDA configure failed"; exit 1 }
 
       - name: Build GGML
         shell: cmd
