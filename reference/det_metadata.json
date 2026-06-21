@@ -1,6 +1,6 @@
 {
-  "model_path": "<redacted>",
-  "reference_audio": "<redacted>",
+  "model_path": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\models\\Qwen3-TTS-12Hz-0.6B-Base",
+  "reference_audio": "C:\\Users\\LEGION 5\\Desktop\\improve qwen\\qwen3-tts.cpp-Fork\\clone.wav",
   "reference_text": "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you.",
   "synthesis_text": "Hello.",
   "language": "English",
@@ -55,7 +55,7 @@
       1024
     ],
     "speech_codes": [
-      7,
+      63,
       16
     ],
     "speech_codes_nonstreaming": [
@@ -63,7 +63,7 @@
       16
     ],
     "hidden_states": [
-      7,
+      63,
       1024
     ],
     "first_frame_logits": [
@@ -71,7 +71,7 @@
       3072
     ],
     "decoded_audio": [
-      13440
+      120960
     ]
   },
   "outputs": {
@@ -92,7 +92,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 4096,
-      "sha256": "233d4d78684bb0b5e993e575133d5efed30f20b8009add8f6a37d310e9418077"
+      "sha256": "38bef04307effe3f062cfbbb2edd9777703e251e9a3a25c6661d3c25260de4d5"
     },
     "det_prefill_embedding.bin": {
       "path": "det_prefill_embedding.bin",
@@ -103,17 +103,17 @@
       ],
       "dtype": "float32",
       "size_bytes": 40960,
-      "sha256": "9526f5497faeb323bf497053cb85a54535c542c8e5db59b8477a6bdd993988a3"
+      "sha256": "3585f1d80cbb9f74d5ef3fed9e4e31649372dda2707f4be9523948f6f068edb5"
     },
     "det_speech_codes.bin": {
       "path": "det_speech_codes.bin",
       "shape": [
-        7,
+        63,
         16
       ],
       "dtype": "int64",
-      "size_bytes": 896,
-      "sha256": "fa90a1bf63563da71b7c3d54aef79a3c269a09801304a85439b9610d9ea2d91b"
+      "size_bytes": 8064,
+      "sha256": "5ee4cf856dab51a6ad761e2618667cd887acbf8d9e52e7c3886f13b6fc94150b"
     },
     "det_speech_codes_nonstreaming.bin": {
       "path": "det_speech_codes_nonstreaming.bin",
@@ -123,17 +123,17 @@
       ],
       "dtype": "int64",
       "size_bytes": 8064,
-      "sha256": "fcfd7df2e727f86fb3b9d76dd4d54897d91b6bcf803a5a49a9ba7c076350fae0"
+      "sha256": "a21c51c71386091f949712054dc88c274d3dd0b814de492a037160f423979b04"
     },
     "det_hidden_states.bin": {
       "path": "det_hidden_states.bin",
       "shape": [
-        7,
+        63,
         1024
       ],
       "dtype": "float32",
-      "size_bytes": 28672,
-      "sha256": "23ae110d277f1ba3579a3b2744b4752108eb1567454ff1ce01ad3af338a75962"
+      "size_bytes": 258048,
+      "sha256": "727acb9ad0cdbd9d08a6bd6a95c37bcdd9a7d616cf83fabcdae22f8bcf74520e"
     },
     "det_first_frame_logits.bin": {
       "path": "det_first_frame_logits.bin",
@@ -143,16 +143,16 @@
       ],
       "dtype": "float32",
       "size_bytes": 12288,
-      "sha256": "08ba467631ce07f58e114997fc2d9a4bbbc7ae39c06f0641fad7ce692d118cf3"
+      "sha256": "1b3d5eaf3c5844fcd5734c633d914e9d865f9ca7ea28aab8063f0b200304a3cb"
     },
     "det_decoded_audio.bin": {
       "path": "det_decoded_audio.bin",
       "shape": [
-        13440
+        120960
       ],
       "dtype": "float32",
-      "size_bytes": 53760,
-      "sha256": "0040a29667a87922971e5c1e6afd251cc6362a30b23f3d4ff0dd54dcf48771c3"
+      "size_bytes": 483840,
+      "sha256": "719a18e8c06b02194bf28ee61e12f1038a68776a008a7c40d0eeb9cff08acd9b"
     },
     "det_trailing_text.bin": {
       "path": "det_trailing_text.bin",
@@ -196,7 +196,7 @@
       ],
       "dtype": "float32",
       "size_bytes": 24576,
-      "sha256": "807008a7566b83aaa3800cdf090cd9371f28119b39bd0af22e0d79eb9f319e20"
+      "sha256": "7448652e7dbedb4a9a4b24fafb8c2a56238c09092689df2a2c4bec80a5c2dc6b"
     },
     "det_tts_overlay.bin": {
       "path": "det_tts_overlay.bin",
@@ -212,10 +212,10 @@
   },
   "wav": {
     "path": "det_output.wav",
-    "sha256": "b69e7ee4e964dfd4e0fb0fabfc2892549f1a70637c2116cf3ccd5717c0dd9755",
+    "sha256": "d9017e6a45b037fc3611f1ad8f9f6bdf2026e4b0af15ce561d1a0d59e9a89efe",
     "sample_rate": 24000,
-    "num_samples": 13440,
-    "duration_seconds": 0.56
+    "num_samples": 120960,
+    "duration_seconds": 5.04
   },
   "prefill_token_types": "det_prefill_token_types.json"
 }
