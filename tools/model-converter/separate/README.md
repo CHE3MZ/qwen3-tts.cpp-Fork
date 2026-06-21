@@ -34,17 +34,29 @@ download-model.bat --hf-token hf_xxx... --variant base --size 0.6b --type q8_0
 ## download-tokenizer.bat — Vocoder + Mimi encoder only
 
 ```bat
-REM Default (F16, recommended)
+REM Default (F16 vocoder + F16 Mimi)
 download-tokenizer.bat
 
-REM F32 Mimi encoder (bit-exact ICL voice cloning)
+REM F32 Mimi encoder — bit-exact ICL voice cloning (recommended if you use ICL)
 download-tokenizer.bat --type f16 --mimi-type f32
 
 REM With token
 download-tokenizer.bat --hf-token hf_xxx...
 ```
 
-**Output:** `models\qwen3-tts-tokenizer-f16.gguf`
+**Output filename:** `models\qwen3-tts-tokenizer-{type}-{mimi-type}.gguf`
+
+Examples:
+- `--type f16 --mimi-type f32` → `qwen3-tts-tokenizer-f16-f32.gguf` ← best for ICL
+- `--type f16 --mimi-type f16` → `qwen3-tts-tokenizer-f16-f16.gguf` ← good general use
+- `--type f16 --mimi-type q8_0` → `qwen3-tts-tokenizer-f16-q8_0.gguf`
+
+The `{type}` tag controls the **vocoder** (WavTokenizer decoder) precision.
+Supported: `f16` (recommended), `f32` (no benefit over f16, double size).
+Q8_0 is not available for the vocoder — 3D conv weights cannot be Q8_0 quantized.
+
+The `{mimi-type}` tag controls the **Mimi encoder** precision (ICL voice cloning only).
+Supported: `f32` (bit-exact, best for ICL), `f16` (98.9% match), `q8_0` (94.3% match, not recommended for ICL).
 
 The tokenizer is **shared** across all TTS model variants and sizes.
 Download it **once** — it works with 0.6B, 1.7B, Base, CustomVoice, VoiceDesign.

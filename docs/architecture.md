@@ -227,9 +227,31 @@ Two GGUF files are required:
 | File | Contains | Converted by |
 |------|----------|-------------|
 | `qwen3-tts-{size}-{quant}.gguf` | Talker + code predictor + speaker encoder | `convert_tts_to_gguf.py` |
-| `qwen3-tts-tokenizer-f16.gguf` | Vocoder decoder + Mimi encoder | `convert_tokenizer_to_gguf.py` |
+| `qwen3-tts-tokenizer-{tok}-{mimi}.gguf` | Vocoder decoder + Mimi encoder | `convert_tokenizer_to_gguf.py` |
 
 The tokenizer GGUF is shared across all model variants and sizes — download once.
+
+### Tokenizer GGUF naming
+
+The tokenizer filename encodes two independent precision choices:
+
+| Part | Controls | Affects |
+|------|----------|---------|
+| `{tok}` (first tag) | Vocoder decoder weights | Audio output quality for all synthesis |
+| `{mimi}` (second tag) | Mimi encoder weights | ICL voice cloning accuracy only |
+
+| Filename | Vocoder | Mimi | Use case |
+|----------|---------|------|----------|
+| `qwen3-tts-tokenizer-f16-f32.gguf` | F16 | F32 | **Recommended for ICL** — bit-exact cloning |
+| `qwen3-tts-tokenizer-f16-f16.gguf` | F16 | F16 | Good general use, no ICL quality loss in practice |
+| `qwen3-tts-tokenizer-f16-q8_0.gguf` | F16 | Q8_0 | Smallest Mimi, not recommended for ICL |
+| `qwen3-tts-tokenizer-f32-f32.gguf` | F32 | F32 | No benefit over f16-f32, double size |
+
+> **Note:** F32 vocoder has no quality benefit over F16 — the source weights are BF16.
+> Q8_0 is not available for the vocoder `--type` — 3D convolution weights in the
+> WavTokenizer cannot be quantized to Q8_0 (non-2D tensors are unsupported).
+> The Mimi encoder precision only matters for ICL voice cloning (`--ref-text` mode).
+> F32 Mimi = 100% code match vs Python; F16 Mimi = 98.9% match; Q8_0 Mimi = 94.3%.
 
 ### Supported quantization
 
@@ -252,11 +274,28 @@ All keys use the `qwen3-tts.*` prefix. Key metadata stored:
 
 ### Auto-discovery
 
-`Qwen3TTS::load_models(dir)` scans for GGUFs matching:
-- `qwen3-tts-*.gguf` — TTS model (Q8_0 preferred, F16 fallback)
-- `qwen3-tts-tokenizer-*.gguf` — Tokenizer/vocoder
+`Qwen3TTS::load_models(dir)` scans for GGUFs in priority order:
 
-Pass a direct `.gguf` file path to bypass priority selection (e.g. to force F16).
+**TTS model** (Q8_0 preferred → F16 fallback, 1.7B preferred → 0.6B):
+```
+qwen3-tts-1.7b-q8_0.gguf → qwen3-tts-1.7b-f16.gguf → qwen3-tts-0.6b-q8_0.gguf → qwen3-tts-0.6b-f16.gguf → ...
+```
+
+**Tokenizer** (f16 vocoder preferred, f32 Mimi preferred for best ICL):
+```
+qwen3-tts-tokenizer-f16-f32.gguf  ← auto-selected if present (best ICL)
+qwen3-tts-tokenizer-f16-f16.gguf
+qwen3-tts-tokenizer-f16-q8_0.gguf
+qwen3-tts-tokenizer-f32-f32.gguf
+qwen3-tts-tokenizer-f32-f16.gguf
+qwen3-tts-tokenizer-f32-q8_0.gguf
+qwen3-tts-tokenizer-f16.gguf      ← legacy single-tag (backward compat)
+qwen3-tts-tokenizer-f32.gguf
+qwen3-tts-tokenizer-q8_0.gguf
+qwen3-tts-tokenizer.gguf
+```
+
+Pass a direct `.gguf` file path to bypass auto-selection entirely.
 
 ---
 

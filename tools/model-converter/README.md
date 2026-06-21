@@ -18,7 +18,7 @@ chmod +x setup_models.sh
 The wizard walks you through:
 1. Model variant (Base / CustomVoice / VoiceDesign)
 2. Model size (0.6B / 1.7B)
-3. Quantization (F16 / Q8_0 / Q6_K / Q5_K / Q4_K)
+3. Quantization (F16 / F32 / Q8_0)
 4. Mimi encoder precision (for ICL voice cloning quality)
 5. HuggingFace token (if needed for gated repos)
 6. Download + conversion
@@ -26,7 +26,7 @@ The wizard walks you through:
 ## Non-interactive mode (CI / scripting)
 
 ```bash
-./setup_models.sh --non-interactive        # Downloads 0.6B Base, F16 quant
+./setup_models.sh --non-interactive        # Downloads 0.6B Base, F16 quant, F32 Mimi
 ./setup_models.sh --hf-token hf_xxx...    # With HuggingFace token
 ```
 
@@ -36,9 +36,13 @@ After setup, your `models/` directory will contain:
 
 ```
 models/
-  qwen3-tts-0.6b-f16.gguf          ← TTS transformer (example)
-  qwen3-tts-tokenizer-f16.gguf     ← Shared vocoder + Mimi encoder
+  qwen3-tts-0.6b-f16.gguf               ← TTS transformer (example)
+  qwen3-tts-tokenizer-f16-f32.gguf      ← Shared vocoder (F16) + Mimi encoder (F32)
 ```
+
+The tokenizer filename encodes both precisions: `qwen3-tts-tokenizer-{vocoder}-{mimi}.gguf`
+- `{vocoder}` — WavTokenizer decoder precision (f16 recommended; f32 adds no quality)
+- `{mimi}` — Mimi encoder precision (f32 = bit-exact ICL; f16 = 98.9% match)
 
 ## Model selection guide
 

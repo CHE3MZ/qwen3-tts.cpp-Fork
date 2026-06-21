@@ -424,12 +424,8 @@ class Qwen3TTSTokenizerConverter:
         # File type
         if self.output_type == "f32":
             ftype = gguf.LlamaFileType.ALL_F32
-        elif self.output_type == "f16":
-            ftype = gguf.LlamaFileType.MOSTLY_F16
-        elif self.output_type == "q8_0":
-            ftype = gguf.LlamaFileType.MOSTLY_Q8_0
         else:
-            ftype = gguf.LlamaFileType.MOSTLY_F16
+            ftype = gguf.LlamaFileType.MOSTLY_F16  # f16 (default)
         writer.add_file_type(ftype)
 
         # Quantization version
@@ -505,7 +501,10 @@ def main():
     )
     parser.add_argument(
         "--type", "-t",
-        choices=["f16", "f32", "q8_0"],
+        choices=["f16", "f32"],
+        # q8_0 is excluded: the vocoder has 3D conv weights that Q8_0 cannot
+        # quantize (QuantError on non-2D tensors). It would silently produce a
+        # mixed-precision file with no meaningful size reduction.
         default="f16",
         help="Output data type for vocoder decoder weights (default: f16)"
     )
@@ -517,7 +516,7 @@ def main():
             "Precision for Mimi encoder weights (mimi_enc.*). "
             "Default: same as --type. "
             "Use 'f32' for bit-exact ICL voice cloning (100%% match vs Python). "
-            "Use 'q8_0' for smallest file size (~250MB) with near-exact accuracy. "
+            "Use 'q8_0' for smallest Mimi size but lower ICL quality (94.3%% match — not recommended). "
             "Codebook embeddings are always F32 regardless of this setting."
         )
     )

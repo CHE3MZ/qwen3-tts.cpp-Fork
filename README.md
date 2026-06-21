@@ -184,9 +184,10 @@ huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir models/Qwen3-
 python scripts/convert_tts_to_gguf.py -i models/Qwen3-TTS-12Hz-0.6B-Base \
     -o models/qwen3-tts-0.6b-q8_0.gguf --type q8_0
 
-# Convert tokenizer/vocoder
-python scripts/convert_tokenizer_to_gguf.py -i models/Qwen3-TTS-12Hz-0.6B-Base \
-    -o models/qwen3-tts-tokenizer-f16.gguf --type f16
+# Convert tokenizer/vocoder (--type = vocoder precision, --mimi-type = Mimi encoder precision)
+# For best ICL voice cloning quality use --mimi-type f32
+python scripts/convert_tokenizer_to_gguf.py -i models/Qwen3-TTS-Tokenizer-12Hz \
+    -o models/qwen3-tts-tokenizer-f16-f32.gguf --type f16 --mimi-type f32
 ```
 
 ## Environment Variables

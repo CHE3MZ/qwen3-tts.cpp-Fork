@@ -73,7 +73,7 @@ def mode_tokenizer(args: dict) -> None:
         "\n  Mimi encoder precision:\n"
         "    1. f16  - 98.9% match vs Python  [recommended]\n"
         "    2. f32  - Bit-exact ICL cloning\n"
-        "    3. q8_0 - Not recommended\n"
+        "    3. q8_0 - Not recommended for ICL\n"
         "\n  Choose (1-3) [default 1]: ",
         ["f16", "f32", "q8_0"], "f16")
 
@@ -211,7 +211,7 @@ def mode_model(args: dict) -> None:
                      "--type", quant])
 
     print(f"\n[done] {out_file.relative_to(REPO_ROOT)}")
-    print("       Pair with: models/qwen3-tts-tokenizer-f16.gguf")
+    print("       Pair with: models/qwen3-tts-tokenizer-f16-f32.gguf  (or your chosen tokenizer)")
 
 def main() -> None:
     args_raw = sys.argv[1:]
