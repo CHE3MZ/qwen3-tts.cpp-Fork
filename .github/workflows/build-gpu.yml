@@ -43,22 +43,26 @@ jobs:
           arch: x64
 
       - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: '12.8.0'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      - name: Verify CUDA install
         shell: pwsh
         run: |
-          Write-Host "Installing CUDA 12.8 via Chocolatey..."
-          choco install cuda --version=12.8.0 --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { Write-Error "Chocolatey CUDA install failed"; exit 1 }
-
-          $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
-          $cudaDir = Get-ChildItem $cudaBase -Directory |
-                     Sort-Object Name -Descending |
-                     Select-Object -First 1
-          if (-not $cudaDir) { Write-Error "CUDA dir not found after install"; exit 1 }
-
-          $cudaPath = $cudaDir.FullName
-          Write-Host "CUDA installed at: $cudaPath"
+          $cudaPath = $env:CUDA_PATH
+          if (-not $cudaPath) {
+            # Fallback: search standard location
+            $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+            if (Test-Path $cudaBase) {
+              $cudaPath = (Get-ChildItem $cudaBase -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+            }
+          }
+          if (-not $cudaPath) { Write-Error "CUDA_PATH not set and not found in standard location"; exit 1 }
+          Write-Host "CUDA at: $cudaPath"
           & "$cudaPath\bin\nvcc.exe" --version
-
           echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
           echo "$cudaPath\bin" >> $env:GITHUB_PATH
 
