@@ -620,7 +620,7 @@ void qwen3_tts_clear_audio_chunk_callback(Qwen3Tts * tts) {
 // ---- speech codes access ----------------------------------------------------
 
 // Internal helper: run synthesize_codes and optionally copy into caller buffer
-static int32_t run_synthesize_codes(Qwen3Tts * tts,
+static int32_t run_synthesize_codes(Qwen3Tts * /*tts*/,
                                      std::vector<int32_t> & codes,
                                      int32_t & n_cb,
                                      int32_t * codes_out, int32_t max_frames,

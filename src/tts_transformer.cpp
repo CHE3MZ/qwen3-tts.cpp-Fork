@@ -77,6 +77,8 @@ static bool coreml_env_disabled() {
 
 // Resolve the CoreML model path: QWEN3_TTS_COREML_MODEL env override, or
 // <model_dir>/coreml/code_predictor.mlpackage next to the GGUF file.
+// Only used on Apple platforms — wrapped to suppress unused-function warning on other builds.
+#if defined(__APPLE__)
 static std::string coreml_model_path(const std::string & model_path) {
     const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
     if (override_env && override_env[0] != '\0') return override_env;
@@ -84,6 +86,7 @@ static std::string coreml_model_path(const std::string & model_path) {
     const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
     return model_dir + "/coreml/code_predictor.mlpackage";
 }
+#endif
 
 bool TTSTransformer::load_model(const std::string & model_path) {
     unload_model();
@@ -252,6 +255,7 @@ bool TTSTransformer::try_init_coreml_code_predictor(const std::string & model_pa
 
 #if !defined(__APPLE__)
     {
+        (void)model_path;  // only used in the Apple branch below
         const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
         if (use_coreml_env && use_coreml_env[0] != '\0') {
             fprintf(stderr, "  CoreML code predictor requested but this build is not on Apple platform\n");

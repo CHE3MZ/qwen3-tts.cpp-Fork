@@ -49,7 +49,6 @@ int main(int argc, char ** argv) {
     const int N = 4;
 
     std::vector<float> zero_emb(1024, 0.0f);
-    int32_t lang_ids[4] = {2050, 2050, 2050, 2050};
 
     // Tokenize all texts
     std::vector<std::vector<int32_t>> all_tokens(N);

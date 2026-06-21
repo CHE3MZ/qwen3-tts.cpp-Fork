@@ -36,12 +36,6 @@ static std::vector<int32_t> encode_text(const std::string & model_path,
     return tok.encode_for_tts(text);
 }
 
-// Check if audio is non-silent (at least one sample with |v| > threshold)
-static bool is_non_silent(const std::vector<float> & samples, float threshold = 0.001f) {
-    for (float v : samples) if (std::fabs(v) > threshold) return true;
-    return false;
-}
-
 // Cosine similarity between two equal-length vectors
 static float cosine_sim(const std::vector<int32_t> & a, const std::vector<int32_t> & b) {
     if (a.size() != b.size() || a.empty()) return 0.0f;
