@@ -333,66 +333,15 @@ class Qwen3TTSConverter:
             except Exception as e:
                 logger.warning(f"Q8_0 quantization failed for {tensor_name}: {e}, falling back to F16")
                 return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q4_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-            
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q4_K)
-                return quantized, gguf.GGMLQuantizationType.Q4_K
-            except Exception as e:
-                logger.warning(f"Q4_K quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q5_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q5_K)
-                return quantized, gguf.GGMLQuantizationType.Q5_K
-            except Exception as e:
-                logger.warning(f"Q5_K quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q6_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q6_K)
-                return quantized, gguf.GGMLQuantizationType.Q6_K
-            except Exception as e:
-                logger.warning(f"Q6_K quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q3_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q3_K)
-                return quantized, gguf.GGMLQuantizationType.Q3_K
-            except Exception as e:
-                logger.warning(f"Q3_K quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q2_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q2_K)
-                return quantized, gguf.GGMLQuantizationType.Q2_K
-            except Exception as e:
-                logger.warning(f"Q2_K quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
+        # NOTE: K-quant branches (q4_k, q5_k, q6_k, q3_k, q2_k) are intentionally
+        # removed from the CLI choices above. The code below is preserved as a
+        # reference skeleton for when native K-quant support is added.
+        # TODO: implement byte-exact GGML K-quant layout and re-enable these branches.
+        # elif self.output_type == "q6_k": ...
+        # elif self.output_type == "q5_k": ...
+        # elif self.output_type == "q4_k": ...
+        # elif self.output_type == "q3_k": ...
+        # elif self.output_type == "q2_k": ...
         else:
             return data.astype(np.float16), gguf.GGMLQuantizationType.F16
 
@@ -506,16 +455,6 @@ class Qwen3TTSConverter:
             ftype = gguf.LlamaFileType.MOSTLY_F16
         elif self.output_type == "q8_0":
             ftype = gguf.LlamaFileType.MOSTLY_Q8_0
-        elif self.output_type == "q4_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q4_K_M
-        elif self.output_type == "q5_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q5_K_M
-        elif self.output_type == "q6_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q6_K
-        elif self.output_type == "q3_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q3_K_M
-        elif self.output_type == "q2_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q2_K
         else:
             ftype = gguf.LlamaFileType.MOSTLY_F16
         writer.add_file_type(ftype)
@@ -675,16 +614,19 @@ def main():
     )
     parser.add_argument(
         "--type", "-t",
-        choices=["f16", "f32", "q8_0", "q4_k", "q5_k", "q6_k", "q3_k", "q2_k"],
+        choices=["f16", "f32", "q8_0"],
+        # K-quants (q6_k, q5_k, q4_k, q3_k, q2_k) are not yet supported:
+        # gguf.quants.quantize() raises NotImplementedError for all K-quant types.
+        # They silently fall back to F16, producing misleadingly large files.
+        # TODO: implement K-quant byte layout here, then add them back to choices.
         default="f16",
         help=(
             "Output data type (default: f16).\n"
+            "  f32   full 32-bit (same quality as f16, source weights are BF16 — not recommended)\n"
+            "  f16   full 16-bit precision (recommended)\n"
             "  q8_0  ~43%% size reduction, virtually lossless\n"
-            "  q6_k  ~57%% size reduction, excellent quality (recommended max quant)\n"
-            "  q5_k  ~64%% size reduction, very good quality\n"
-            "  q4_k  ~70%% size reduction, good quality\n"
-            "  q3_k  ~76%% size reduction, NOT recommended for TTS (audible artifacts)\n"
-            "  q2_k  ~81%% size reduction, NOT recommended for TTS (significant quality loss)\n"
+            "K-quants (q6_k, q5_k, q4_k, q3_k, q2_k) are not yet supported by the\n"
+            "gguf Python library and are disabled until native support is added.\n"
             "Embeddings, norms, biases, and LM heads are always kept in F16."
         )
     )
