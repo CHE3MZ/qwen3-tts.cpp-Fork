@@ -23,9 +23,9 @@ set MIMI_TYPE=f16
 
 :parse
 if "%~1"=="" goto done
-if /i "%~1"=="--type"      ( set TYPE=%~2      & shift & shift & goto parse )
-if /i "%~1"=="--mimi-type" ( set MIMI_TYPE=%~2 & shift & shift & goto parse )
-if /i "%~1"=="--hf-token"  ( set TOKEN=%~2     & shift & shift & goto parse )
+if /i "%~1"=="--type"      ( set "TYPE=%~2"      & shift & shift & goto parse )
+if /i "%~1"=="--mimi-type" ( set "MIMI_TYPE=%~2" & shift & shift & goto parse )
+if /i "%~1"=="--hf-token"  ( set "TOKEN=%~2"     & shift & shift & goto parse )
 shift & goto parse
 :done
 
@@ -33,7 +33,7 @@ REM Find Python
 set PYTHON=
 where python >nul 2>&1 && set PYTHON=python
 if "%PYTHON%"=="" where python3 >nul 2>&1 && set PYTHON=python3
-if "%PYTHON%"=="" ( echo [error] Python not found. & exit /b 1 )
+if "%PYTHON%"=="" ( echo [error] Python not found. & pause & exit /b 1 )
 
 echo.
 echo ============================================================
@@ -51,25 +51,8 @@ if exist "%TOK_DIR%\model.safetensors" (
     echo [ok] Tokenizer already downloaded at %TOK_DIR%
 ) else (
     echo [1/2] Downloading tokenizer...
-    set HF_TOKEN_ARG=
-    if not "%TOKEN%"=="" set HF_TOKEN_ARG=--token %TOKEN%
-    "%PYTHON%" -c "
-import sys, time
-from huggingface_hub import snapshot_download
-delay = 5
-for attempt in range(1, 6):
-    try:
-        snapshot_download('Qwen/Qwen3-TTS-Tokenizer-12Hz',
-                          local_dir=r'%TOK_DIR%',
-                          token='%TOKEN%' if '%TOKEN%' else None,
-                          resume_download=True)
-        break
-    except Exception as e:
-        if attempt == 5: raise
-        print(f'  [warn] attempt {attempt}/5 failed: {type(e).__name__}. Retrying in {delay}s...')
-        time.sleep(delay); delay = min(delay*2, 60)
-"
-    if errorlevel 1 ( echo [error] Download failed. & exit /b 1 )
+    "%PYTHON%" "%~dp0_hf_download.py" "Qwen/Qwen3-TTS-Tokenizer-12Hz" "%TOK_DIR%" "%TOKEN%"
+    if errorlevel 1 ( echo [error] Download failed. & pause & exit /b 1 )
     echo [ok] Tokenizer downloaded.
 )
 
@@ -85,10 +68,11 @@ if exist "%OUT_FILE%" (
         --output "%OUT_FILE%" ^
         --type %TYPE% ^
         --mimi-type %MIMI_TYPE%
-    if errorlevel 1 ( echo [error] Conversion failed. & exit /b 1 )
+    if errorlevel 1 ( echo [error] Conversion failed. & pause & exit /b 1 )
 )
 
 echo.
 echo ============================================================
 echo  Done!  %OUT_FILE%
 echo ============================================================
+pause
