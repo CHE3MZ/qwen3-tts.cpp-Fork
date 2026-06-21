@@ -192,30 +192,31 @@ jobs:
           echo "VULKAN_SDK=$env:VULKAN_SDK" >> $env:GITHUB_ENV
           echo "$env:VULKAN_SDK\Bin" >> $env:GITHUB_PATH
 
-      - name: Install SPIRV-Headers
+      - name: Install SPIRV-Headers and Configure GGML with Vulkan
         shell: pwsh
         run: |
-          $srcDir = "$env:RUNNER_TEMP\SPIRV-Headers"
+          # Install SPIRV-Headers
+          $srcDir  = "$env:RUNNER_TEMP\SPIRV-Headers"
           $instDir = "$env:RUNNER_TEMP\SPIRV-Headers-install"
           if (-not (Test-Path "$instDir\cmake\SPIRV-HeadersConfig.cmake")) {
-            Write-Host "Downloading and building SPIRV-Headers..."
+            Write-Host "Cloning SPIRV-Headers..."
             git clone --depth 1 --branch main https://github.com/KhronosGroup/SPIRV-Headers.git $srcDir
             cmake -S $srcDir -B "$srcDir\build" -DCMAKE_INSTALL_PREFIX=$instDir -DCMAKE_BUILD_TYPE=Release
             cmake --build "$srcDir\build" --config Release -j
             cmake --install "$srcDir\build"
           }
-          # Export both the cmake subdir (for find_package) and the install root (for CMAKE_PREFIX_PATH)
-          echo "SPIRV-Headers_DIR=$instDir\cmake" >> $env:GITHUB_ENV
-          echo "SPIRV_HEADERS_ROOT=$instDir" >> $env:GITHUB_ENV
+          Write-Host "SPIRV-Headers install dir: $instDir"
+          if (-not (Test-Path "$instDir\cmake\SPIRV-HeadersConfig.cmake")) {
+            Write-Error "SPIRV-HeadersConfig.cmake not found after install"
+            exit 1
+          }
 
-      - name: Configure GGML with Vulkan
-        shell: pwsh
-        run: |
+          # Configure GGML — pass install root directly, no env var round-trip
           cmake -S ggml -B ggml\build `
             -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_VULKAN=ON `
-            "-DCMAKE_PREFIX_PATH=$env:SPIRV_HEADERS_ROOT"
+            "-DCMAKE_PREFIX_PATH=$instDir"
 
       - name: Build GGML
         shell: cmd
