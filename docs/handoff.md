@@ -1,5 +1,67 @@
-# Handoff
-<!-- Last updated: 2026-06-20 -->
+# Handoff: GGUF Pre-built Distribution + Production Audit
+<!-- Last updated: 2026-06-21 -->
+
+## Summary
+`qwen3-tts.cpp-Fork` is a C++17/GGML TTS pipeline — working, tested, Vulkan build confirmed on GTX 1650 Ti. This session focused on model distribution infrastructure and several bug fixes. Next session: create the HuggingFace GGUF repo and implement the pre-built download path in `setup_pipeline_models.py`, then run the production audit.
+
+## Objective
+1. Create `CHE3MZ/qwen3-tts.cpp-GGUF` HuggingFace repo and upload pre-built GGUFs
+2. Update `scripts/setup_pipeline_models.py` to try HF download before local conversion
+3. Full production audit (bugs, memory leaks, security, stability) — see `jobs.md`
+
+## Status
+
+### Completed
+* ICL hang fixed — `forward_prefill()` now chunks large prefills (PREFILL_CHUNK_SIZE=16) to avoid GGML scheduler OOM
+* `build.bat --vulkan` flag added; local Vulkan build tested and confirmed working
+* `-m` flag now accepts direct `.gguf` file path (bypasses Q8_0 priority — needed for F16 ICL)
+* `tools/model-converter/setup_models.py` — VoiceDesign 0.6B blocked (doesn't exist), retry logic added for network drops
+* `tools/model-converter/separate/` — new `download-model.bat`, `download-tokenizer.bat`, `_interactive.py`, `_hf_download.py` with interactive menus and 5x retry
+* 30s reference audio warning added to all 3 speaker encoder call sites in `qwen3_tts.cpp`
+* Vulkan build tested: basic synth, x-vector clone, Chinese, 48kHz, embedding save/load all pass
+* Tokenizer safetensors downloaded and converted to `qwen3-tts-tokenizer-f16.gguf` via new scripts
+
+### In Progress
+* 0.6B Base safetensors downloading (triggered by `download-model.bat` test run) — will produce `qwen3-tts-0.6b-q8_0.gguf` when done
+* HuggingFace GGUF repo not yet created — user needs to do this manually
+
+## Decisions
+* One HF repo (`CHE3MZ/qwen3-tts.cpp-GGUF`) for all models — not per-model repos
+* Tokenizer uploaded once (f16 + optional f32); shared across all TTS variants
+* No hard cap on reference audio length — warn only when >30s
+* ICL with 0.6B Base intentionally unsupported (model too small; Python reference only tests 1.7B)
+* Emotion/instruct requires CustomVoice 1.7B or VoiceDesign 1.7B — not possible to combine with voice clone on any model
+* `greedy (temperature=0) = silent audio` is expected model behavior, not a bug
+* Mimi encoder is correct — 0% test match was from wrong reference file (different audio clip)
+* Do NOT auto-commit — user handles all commits manually
+
+## Non-Obvious Findings
+* `test_mimi_encoder` shows 0% match against `reference/mimi_enc_py_codes.bin` — the reference was generated from a different, longer `clone.wav` (18.8s, developer's Mac). Not a C++ bug.
+* ICL bad audio quality = Q8_0 + 0.6B model, not a code bug. Use F16 + 1.7B for good ICL.
+* `Serveurperso/Qwen3-TTS-GGUF` on HF uses incompatible tensor naming — cannot be used with this fork.
+* `cstr/*` HF repos also incompatible — different converter, different runtime target.
+
+## Open Issues
+* HF GGUF repo not created yet — user must create `CHE3MZ/qwen3-tts.cpp-GGUF` manually
+* Production audit not started — see `jobs.md`
+* License file not written
+* `test_mimi_encoder` reference needs regeneration from current `clone.wav`
+* Batch mode missing rep/freq/presence penalties (carry-forward from previous session)
+* KV cache realloc drops KV data on long sequences (carry-forward)
+
+## Next Steps
+1. User creates HF repo `CHE3MZ/qwen3-tts.cpp-GGUF`; upload GGUFs from `models/` once conversions finish
+2. Add pre-built HF download path to `scripts/setup_pipeline_models.py` (try HF first, fall back to convert)
+3. Run full production audit: bugs, memory leaks, security, stability — `jobs.md` item 2
+
+## References
+* Architecture + conventions: `AGENTS.md`
+* Previous session notes: `docs/handoff.md` (this file replaces prior content)
+* Porting guide: `docs/porting.md`
+* Open tasks: `jobs.md` (workspace root)
+* New separate download scripts: `tools/model-converter/separate/`
+* C API: `src/qwen3tts_c_api.h`
+* Build baseline: `test_transformer` 6P/1W/0F · `test_batch` 5P · `test_decoder` L2=0.001289 corr=0.9999
 
 ## Repo
 Branch: `main` — working tree clean, all changes committed.
