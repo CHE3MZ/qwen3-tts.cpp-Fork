@@ -8,14 +8,8 @@ Download only what you need — TTS model or tokenizer independently.
 REM Base 0.6B Q8_0 (recommended default)
 download-model.bat --variant base --size 0.6b --type q8_0
 
-REM Base 0.6B all quants
+REM Base 0.6B F16 (full precision)
 download-model.bat --variant base --size 0.6b --type f16
-download-model.bat --variant base --size 0.6b --type q8_0
-download-model.bat --variant base --size 0.6b --type q6_k
-download-model.bat --variant base --size 0.6b --type q5_k
-download-model.bat --variant base --size 0.6b --type q4_k
-download-model.bat --variant base --size 0.6b --type q3_k
-download-model.bat --variant base --size 0.6b --type q2_k
 
 REM 1.7B variants
 download-model.bat --variant base --size 1.7b --type q8_0
@@ -25,6 +19,12 @@ download-model.bat --variant voice_design --size 1.7b --type q8_0
 REM With HuggingFace token (for gated repos)
 download-model.bat --hf-token hf_xxx... --variant base --size 0.6b --type q8_0
 ```
+
+**Supported types:** `f16`, `q8_0`
+
+> **Note:** K-quants (q6_k, q5_k, q4_k, q3_k, q2_k) are not yet supported by the
+> Python gguf library and will fall back to F16 silently. They are disabled until
+> native K-quant support is added to the converter.
 
 **Outputs:** `models\qwen3-tts-{size}-{type}.gguf`
 

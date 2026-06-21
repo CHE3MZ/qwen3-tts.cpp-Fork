@@ -113,14 +113,21 @@ def mode_model(args: dict) -> None:
         "custom_voice": {"label": "CustomVoice  - Named speaker presets + instruct (1.7B)"},
         "voice_design": {"label": "VoiceDesign  - Describe voice in text (1.7B only)"},
     }
+    # NOTE: only f16 and q8_0 are supported by the gguf Python library.
+    # K-quants (q6_k, q5_k, q4_k, q3_k, q2_k) raise NotImplementedError in
+    # gguf.quants.quantize() and silently fall back to F16, producing a
+    # misleadingly large file. They are commented out until the converter
+    # supports them natively.
+    # TODO: implement K-quant byte layout in convert_tts_to_gguf.py, then
+    #       uncomment the entries below and update the menu numbering.
     QUANTS = {
         "f16":   "~1.75/4.2 GB   Full precision",
         "q8_0":  "~1.28/3.1 GB   Near-lossless  [recommended]",
-        "q6_k":  "~0.99/2.4 GB   Excellent",
-        "q5_k":  "~0.86/2.1 GB   Very good",
-        "q4_k":  "~0.72/1.8 GB   Good",
-        "q3_k":  "~0.58/1.4 GB   Not recommended",
-        "q2_k":  "~0.46/1.1 GB   Not recommended",
+        # "q6_k":  "~0.99/2.4 GB   Excellent",
+        # "q5_k":  "~0.86/2.1 GB   Very good",
+        # "q4_k":  "~0.72/1.8 GB   Good",
+        # "q3_k":  "~0.58/1.4 GB   Not recommended",
+        # "q2_k":  "~0.46/1.1 GB   Not recommended",
     }
 
     print()
@@ -149,7 +156,7 @@ def mode_model(args: dict) -> None:
     quant_prompt = "\n  Quantization (0.6b / 1.7b):\n"
     for i, (k, v) in enumerate(QUANTS.items(), 1):
         quant_prompt += f"    {i}. {k:<6} {v}\n"
-    quant_prompt += "\n  Choose (1-7) [default 2]: "
+    quant_prompt += "\n  Choose (1-2) [default 2]: "
 
     quant = args.get("type") or ask(quant_prompt, list(QUANTS.keys()), "q8_0")
 
