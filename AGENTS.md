@@ -35,12 +35,20 @@ qwen3-tts.cpp/
     test_encoder.cpp
     test_transformer.cpp        # Deterministic reference comparison
     test_decoder.cpp
+    test_batch.cpp              # Batch inference correctness + KV isolation
+    test_mimi_encoder.cpp       # Mimi encoder codec code match vs Python
+    bench_batch.cpp             # Batch throughput benchmark
   scripts/                      # Python utilities
     convert_tts_to_gguf.py      # HuggingFace -> GGUF converter (TTS model)
     convert_tokenizer_to_gguf.py # HuggingFace -> GGUF converter (vocoder)
+    setup_pipeline_models.py    # One-shot download + convert all models
     generate_deterministic_reference.py  # Generate Python reference data
     compare_e2e.py              # End-to-end Python vs C++ comparison
     run_all_tests.sh            # Test runner
+  tools/                        # Build scripts and model setup tools
+    build-scripts/              # CMake + Ninja build wrappers (build.bat / build.sh)
+    model-downloader/           # Pre-built GGUF downloader (no torch required)
+    model-converter/            # Interactive download + local conversion wizard
   reference/                    # Reference data (*.bin gitignored, *.json tracked)
   models/                       # GGUF models (gitignored)
   CMakeLists.txt

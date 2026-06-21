@@ -176,7 +176,7 @@ The transformer generates audio codes from text:
 
 ```bash
 # Memory check (Linux):
-/usr/bin/time -v ./build/qwen3-tts-cli \
+/usr/bin/time -v ./build-ninja/qwen3-tts-cli \
     -m models \
     -t "Hello, this is a test." \
     -r clone.wav \
@@ -187,7 +187,7 @@ The transformer generates audio codes from text:
 # Actual:   ~3140000 KB (3.1 GB) - PASS
 
 # Performance benchmark:
-./build/qwen3-tts-cli \
+./build-ninja/qwen3-tts-cli \
     -m models \
     -t "Hello, this is a test." \
     -r clone.wav \

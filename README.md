@@ -105,28 +105,28 @@ For 1.7B, talker hidden=2048 is projected to code predictor hidden=1024 via `sma
 
 ```bash
 # Basic
-./build/qwen3-tts-cli -m models -t "Hello, world!" -o hello.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello, world!" -o hello.wav
 
 # Voice clone
-./build/qwen3-tts-cli -m models -t "Hello!" -r reference.wav -o cloned.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello!" -r reference.wav -o cloned.wav
 
 # Named speaker (CustomVoice models)
-./build/qwen3-tts-cli -m models -t "Hello!" --speaker Vivian -o vivian.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello!" --speaker Vivian -o vivian.wav
 
 # With ICL (best quality)
-./build/qwen3-tts-cli -m models -t "Hello!" -r ref.wav --ref-text "reference text" -o icl.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello!" -r ref.wav --ref-text "reference text" -o icl.wav
 
 # Description-based voice design
-./build/qwen3-tts-cli -m models -t "Hello!" --instruct "Warm female voice" -o designed.wav
+./build-ninja/qwen3-tts-cli -m models -t "Hello!" --instruct "Warm female voice" -o designed.wav
 
 # All sampling options
-./build/qwen3-tts-cli -m models -t "Hello" --temperature 0.9 --top-k 50 --top-p 0.9 \
+./build-ninja/qwen3-tts-cli -m models -t "Hello" --temperature 0.9 --top-k 50 --top-p 0.9 \
   --min-p 0.05 --repetition-penalty 1.1 --frequency-penalty 0.3 \
   --dry-multiplier 0.8 --dyntemp-range 0.3 \
   --sub-top-p 0.8 -o out.wav
 
 # Server mode (stdin JSON, one request per line)
-./build/qwen3-tts-cli -m models --server
+./build-ninja/qwen3-tts-cli -m models --server
 ```
 
 ### CLI Options
@@ -165,7 +165,19 @@ For 1.7B, talker hidden=2048 is projected to code predictor hidden=1024 via `sma
 
 ## Model Setup
 
-### One-shot (recommended)
+### Pre-built — no conversion needed (easiest)
+
+Download ready-to-use GGUFs directly from HuggingFace. Only requires `huggingface_hub`.
+
+```bash
+# Windows
+tools\model-downloader\download.bat
+
+# macOS / Linux
+./tools/model-downloader/download.sh
+```
+
+### One-shot — download + convert locally
 
 ```bash
 source .venv/bin/activate
@@ -205,9 +217,9 @@ python scripts/convert_tokenizer_to_gguf.py -i models/Qwen3-TTS-Tokenizer-12Hz \
 bash scripts/run_all_tests.sh
 
 # Individual
-./build/test_transformer --model models/qwen3-tts-0.6b-f16.gguf --ref-dir reference/
-./build/test_batch --model models/qwen3-tts-0.6b-f16.gguf --max-len 32
-./build/test_tokenizer --model models/qwen3-tts-0.6b-f16.gguf
+./build-ninja/test_transformer --model models/qwen3-tts-0.6b-f16.gguf --ref-dir reference/
+./build-ninja/test_batch --model models/qwen3-tts-0.6b-f16.gguf --max-len 32
+./build-ninja/test_tokenizer --model models/qwen3-tts-0.6b-f16.gguf
 
 # Generate reference data
 uv run python scripts/generate_deterministic_reference.py

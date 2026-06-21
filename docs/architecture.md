@@ -169,6 +169,9 @@ scripts/
 tools/
   build-scripts/build.bat       Windows CMake + Ninja build
   build-scripts/build.sh        macOS/Linux CMake + Ninja build
+  model-downloader/download.py  Pre-built GGUF downloader (no torch required)
+  model-downloader/download.bat Windows wrapper
+  model-downloader/download.sh  macOS/Linux wrapper
   model-converter/setup_models.py   Interactive download+convert wizard (Python)
   model-converter/separate/    Per-component download scripts
 
