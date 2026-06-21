@@ -206,6 +206,13 @@ void qwen3_tts_clear_progress_callback(Qwen3Tts * tts);
 /* -------------------------------------------------------------------
  * Abort callback — cancels generation mid-graph (e.g. user pressed stop).
  * callback(data) returns true → abort current graph compute.
+ *
+ * IMPORTANT LIMITATION: On GPU backends (Vulkan, CUDA, Metal) the abort
+ * has no effect during heavy graph compute steps — those schedulers do not
+ * support mid-graph cancellation. The callback only fires on CPU backends.
+ * On GPU builds, synthesis can be interrupted between codec frame steps
+ * (the generate loop checks the callback return value each frame).
+ * On CPU-only builds, cancellation fires per-node for near-instant response.
  * ------------------------------------------------------------------- */
 void qwen3_tts_set_abort_callback(Qwen3Tts * tts,
                                    ggml_abort_callback fn,

@@ -272,6 +272,11 @@ public:
 
     // Abort callback — cancels synthesis mid-graph compute.
     // fn(data) returns true → abort. Pass nullptr to clear.
+    // NOTE: On GPU backends (Vulkan, CUDA, Metal) this has no effect during
+    // heavy graph compute steps — those schedulers do not support mid-graph
+    // cancellation. On GPU builds, synthesis can only be interrupted between
+    // codec frame steps (checked in the generate loop). On CPU-only builds,
+    // the callback fires per graph node and cancels immediately.
     void set_abort_callback(ggml_abort_callback fn, void * userdata);
     void clear_abort_callback();
 

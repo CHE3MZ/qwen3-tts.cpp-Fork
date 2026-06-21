@@ -22,7 +22,12 @@ qwen3-tts.cpp/
     text_tokenizer.{h,cpp}     # BPE text tokenizer
     audio_tokenizer_encoder.{h,cpp}  # ECAPA-TDNN speaker encoder
     audio_tokenizer_decoder.{h,cpp}  # WavTokenizer vocoder
+    mimi_encoder.{h,cpp}       # Mimi audio encoder (ICL voice cloning)
     gguf_loader.{h,cpp}        # GGUF model loading
+    qwen3tts_c_api.{h,cpp}    # C FFI bindings
+    coreml_code_predictor.h    # CoreML code predictor interface
+    coreml_code_predictor.mm   # CoreML implementation (Apple only)
+    coreml_code_predictor_stub.cpp  # No-op stub for non-Apple builds
   tests/                        # Component tests
     test_codebook.cpp
     test_vq_only.cpp
@@ -175,8 +180,9 @@ bash scripts/run_all_tests.sh           # Full suite
 
 - F16 model weights cause autoregressive divergence vs Python's float32 — speech codes differ but audio is perceptually equivalent
 - M-RoPE uses 1D positions (equivalent for single-batch, may differ for batched inference)
-- **Batch inference not implemented** — C++ processes one utterance at a time; Python supports batches
+- **Batch inference** — implemented as round-robin sequential decode across N utterances per frame step. Functionally correct; not true data-parallel GPU batch inference (all N entries share one KV cache slot each, decoded one at a time per step). See `synthesize_batch()` in `qwen3_tts.cpp` and `generate_batch()` in `tts_transformer.cpp`.
 - **ICL voice cloning** — fully implemented. The Mimi audio encoder is loaded from the tokenizer GGUF and achieves 98.9% code match vs Python (F16) / 100% (F32). `generate_icl()` is used when `--ref-text` is provided alongside `--reference`.
+- **Abort callback** — wired to the CPU backend only via `ggml_backend_cpu_set_abort_callback`. Has no effect on GPU backends (Vulkan/CUDA/Metal) during heavy compute steps — those schedulers do not support mid-graph abort. On GPU builds, aborting is only possible between frame steps (checked in the generate loop).
 - `--top-p` is parsed and applied in both the main talker and code predictor sampling
 - Top-level CMake expects vendored GGML at `./ggml`
 

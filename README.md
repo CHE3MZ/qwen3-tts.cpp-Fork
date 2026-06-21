@@ -13,13 +13,14 @@ Forked from [predict-woo/qwen3-tts.cpp](https://github.com/predict-woo/qwen3-tts
 - **Full 4-stage pipeline** — BPE tokenizer, ECAPA-TDNN speaker encoder, 28L Qwen2 talker + 5L×15-step code predictor, WavTokenizer vocoder
 - **All 3 model types** — Base (voice clone), CustomVoice (named speaker), VoiceDesign (free-form description)
 - **Both model sizes** — 0.6B (hidden=1024) and 1.7B (hidden=2048, code predictor stays at 1024 with projection)
-- **All quantization levels** — F16, Q8_0, Q5_K, Q6_K, Q4_K, Q3_K, Q2_K
+- **Supported quantization** — F16, F32, Q8_0 (K-quants Q6_K/Q5_K/Q4_K/Q3_K/Q2_K not yet supported by the Python converter)
 - **ICL voice cloning** — full in-context learning via Mimi encoder (100% exact on F32)
-- **Batch inference** — process N texts simultaneously with shared speaker embedding
+- **Batch inference** — process N texts with shared speaker embedding (sequential round-robin per frame, not data-parallel GPU batching)
 - **Extended sampling** — temperature, top-k, top-p, min-p, repetition/frequency/presence penalty, DRY n-gram penalty, dynamic temperature
 - **Flash attention** on all single-token decode steps
 - **Streaming + non-streaming** prefill modes
-- **Callbacks** — progress, per-frame logits, streaming audio chunks, abort, eval
+- **Callbacks** — progress, per-frame logits, streaming audio chunks, abort (CPU-only — GPU backends do not support mid-graph cancel), eval
+- **CoreML code predictor** — Apple platforms only; gracefully falls back to GGML on other platforms
 - **C API** — full FFI surface for integration (thread-safe)
 
 ## Benchmarks
@@ -179,7 +180,7 @@ Flags: `--force` re-downloads, `--coreml auto|on|off`, `--skip-download`.
 # Download
 huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir models/Qwen3-TTS-12Hz-0.6B-Base
 
-# Convert TTS model (choose --type: f16, q8_0, q5_k, q6_k, q4_k, q3_k, q2_k)
+# Convert TTS model (supported --type values: f16, f32, q8_0)
 python scripts/convert_tts_to_gguf.py -i models/Qwen3-TTS-12Hz-0.6B-Base \
     -o models/qwen3-tts-0.6b-q8_0.gguf --type q8_0
 
@@ -192,8 +193,8 @@ python scripts/convert_tokenizer_to_gguf.py -i models/Qwen3-TTS-12Hz-0.6B-Base \
 
 | Variable | Effect |
 |----------|--------|
-| `QWEN3_TTS_USE_COREML=0` | Disable CoreML code predictor |
-| `QWEN3_TTS_COREML_MODEL=<path>` | Override CoreML model path |
+| `QWEN3_TTS_USE_COREML=0` | Disable CoreML code predictor (Apple only — no-op on other platforms) |
+| `QWEN3_TTS_COREML_MODEL=<path>` | Override CoreML model path (Apple only) |
 | `QWEN3_TTS_LOW_MEM=1` | Unload transformer after generation |
 
 ## Testing
