@@ -209,13 +209,13 @@ jobs:
           echo "SPIRV_HEADERS_ROOT=$instDir" >> $env:GITHUB_ENV
 
       - name: Configure GGML with Vulkan
-        shell: cmd
-        run: >
-          cmake -S ggml -B ggml\build
-          -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DGGML_VULKAN=ON
-          "-DCMAKE_PREFIX_PATH=%SPIRV_HEADERS_ROOT%"
+        shell: pwsh
+        run: |
+          cmake -S ggml -B ggml\build `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_VULKAN=ON `
+            "-DCMAKE_PREFIX_PATH=$env:SPIRV_HEADERS_ROOT"
 
       - name: Build GGML
         shell: cmd
