@@ -204,7 +204,9 @@ jobs:
             cmake --build "$srcDir\build" --config Release -j
             cmake --install "$srcDir\build"
           }
+          # Export both the cmake subdir (for find_package) and the install root (for CMAKE_PREFIX_PATH)
           echo "SPIRV-Headers_DIR=$instDir\cmake" >> $env:GITHUB_ENV
+          echo "SPIRV_HEADERS_ROOT=$instDir" >> $env:GITHUB_ENV
 
       - name: Configure GGML with Vulkan
         shell: cmd
@@ -213,6 +215,7 @@ jobs:
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DGGML_VULKAN=ON
+          "-DCMAKE_PREFIX_PATH=%SPIRV_HEADERS_ROOT%"
 
       - name: Build GGML
         shell: cmd
