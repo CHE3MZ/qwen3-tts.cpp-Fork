@@ -121,8 +121,8 @@ def mode_model(args: dict) -> None:
     # TODO: implement K-quant byte layout in convert_tts_to_gguf.py, then
     #       uncomment the entries below and update the menu numbering.
     QUANTS = {
+        "f32":   "~3.5/8.4 GB    Full 32-bit precision  [not recommended — same quality as F16, double size]",
         "f16":   "~1.75/4.2 GB   Full precision  [recommended]",
-        "f32":   "~3.5/8.4 GB    Double size, same quality as F16 (weights are BF16 in source)",
         "q8_0":  "~1.28/3.1 GB   Near-lossless",
         # "q6_k":  "~0.99/2.4 GB   Excellent",
         # "q5_k":  "~0.86/2.1 GB   Very good",

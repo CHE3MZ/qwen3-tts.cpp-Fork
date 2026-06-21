@@ -68,8 +68,8 @@ TOKENIZER_LOCAL   = "Qwen3-TTS-Tokenizer-12Hz"
 # TODO: implement K-quant byte layout in scripts/convert_tts_to_gguf.py, then
 #       uncomment the entries below.
 QUANT_OPTIONS = {
+    "f32":   "F32  — Full 32-bit precision (~3.5 GB / 0.6B). [Not recommended — same quality as F16, double size]",
     "f16":   "F16  — Full precision (~1.75 GB / 0.6B). Best quality. [Recommended]",
-    "f32":   "F32  — Double size (~3.5 GB / 0.6B), same quality as F16 (source weights are BF16).",
     "q8_0":  "Q8_0 — 8-bit quantized (~1.0 GB / 0.6B). Virtually lossless quality.",
     # "q6_k":  "Q6_K  — 6-bit K-quant (~0.75 GB / 0.6B). Excellent quality.",
     # "q5_k":  "Q5_K  — 5-bit K-quant (~0.65 GB / 0.6B). Very good quality.",
