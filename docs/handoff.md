@@ -18,6 +18,11 @@
 ### Not Yet Done
 * User has not committed any of the above changes yet
 
+### Fixed Since Handoff
+* **ICL prefill ordering (🔴 root cause)** — `build_prefill_graph_icl` concatenated `[icl_block | base_framing]` instead of Python's `[base_framing | icl_block]`. Model saw reference audio codes before role/codec framing — completely broken. Fixed at `tts_transformer.cpp:3515-3525`.
+* **ICL trailing order** — same function also had `[icl_trailing | base_trailing]` swapped; fixed alongside prefill at `tts_transformer.cpp:3527-3536`.
+* **`generate_icl()` missing logits callback** — `generate_icl()` never fired the per-frame logits callback, so progress callbacks (chained through it) never fired during ICL synthesis. Fixed at `tts_transformer.cpp:3702-3707`.
+
 ## Decisions
 * GGML upgrade kept — spectral analysis and purity tests confirmed audio quality unchanged; perceived difference was run-to-run stochastic variation, not regression
 * `test_decoder` correlation FAIL is expected and not a bug — greedy decoding (used by reference generator) collapses to near-silent frames (code 706 = 70% of output); correlation of two near-flat signals is undefined. L2 PASS is the meaningful metric here
