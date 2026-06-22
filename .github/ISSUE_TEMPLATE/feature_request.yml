@@ -1,0 +1,61 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got an idea? Great — describe what you need and why.
+        
+        Before submitting, a quick check: [docs/architecture.md Known Limitations](../docs/architecture.md#known-limitations)
+        covers things like K-quants and GPU batch parallelism that are already on the radar.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Sampling / generation quality
+        - New quantization format (K-quants)
+        - New model variant support
+        - Performance / speed
+        - C API surface
+        - CLI options
+        - Streaming / real-time output
+        - Batch inference improvements
+        - Build system / platform support
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that you currently cannot?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? Include API design or CLI flag ideas if applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you've thought about or tried
+
+  - type: dropdown
+    id: willing_to_contribute
+    attributes:
+      label: Would you be willing to submit a PR? (optional)
+      options:
+        - "Yes"
+        - "No"
+        - "Maybe, with guidance"

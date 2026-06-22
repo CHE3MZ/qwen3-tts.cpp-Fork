@@ -1,0 +1,39 @@
+name: Compatibility / Model Question
+description: GGUF compatibility, model variant questions, or platform support
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for questions about model compatibility, platform support,
+        or how specific features work. If your GGUF won't load, note which file you
+        downloaded and where it came from — this helps narrow things down quickly.
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - GGUF from another source not loading
+        - Model variant (Base / CustomVoice / VoiceDesign) behaviour
+        - Platform / OS support question
+        - GPU backend compatibility
+        - Python converter question
+        - Pre-built GGUF download question
+        - C API integration question
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question / issue description
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What you have tried
+      description: Steps taken, error messages seen, docs sections already read

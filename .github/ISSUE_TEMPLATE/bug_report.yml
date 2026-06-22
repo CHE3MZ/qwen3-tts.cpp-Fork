@@ -1,0 +1,104 @@
+name: Bug Report
+description: Something is broken or producing wrong output
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Fill in what you can —
+        the more detail you provide, the faster it can be fixed.
+
+        Quick checklist:
+        - Are you using GGUFs converted with the **included scripts**? (Older or third-party GGUFs may not be compatible)
+        - Have you checked [docs/architecture.md](../docs/architecture.md) Known Limitations?
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of the pipeline is broken?
+      options:
+        - CLI / synthesis output
+        - Voice cloning (x-vector)
+        - ICL voice cloning (--ref-text)
+        - Vocoder / audio quality
+        - Model loading / GGUF
+        - C API (qwen3tts.dll)
+        - Build system / compilation
+        - Model converter (Python scripts)
+        - Model downloader scripts
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - CPU only
+        - Vulkan
+        - CUDA
+        - Metal (macOS)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model file
+      description: Which GGUF file are you using?
+      placeholder: "e.g. qwen3-tts-0.6b-f16.gguf + qwen3-tts-tokenizer-f16-f32.gguf"
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command / code used
+      description: Exact CLI command or C API call that triggers the bug
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What actually happens? Include full error output if available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: build_info
+    attributes:
+      label: Build info
+      description: Output of `qwen3-tts-cli --version` and any relevant CMake flags
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Reference audio clip details, system specs, anything else relevant

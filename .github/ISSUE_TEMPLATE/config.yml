@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Pre-built GGUFs
+    url: https://huggingface.co/librellama/qwen3-tts-GGUF
+    about: Download ready-to-use GGUF model files
+
+  - name: Architecture & Feature Reference
+    url: https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/blob/main/docs/architecture.md
+    about: Full technical reference — pipeline, all features, known limitations
+
+  - name: README
+    url: https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/blob/main/README.md
+    about: Quickstart, CLI usage, model setup guide
