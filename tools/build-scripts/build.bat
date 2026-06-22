@@ -95,7 +95,7 @@ if "%VULKAN%"=="ON" (
     echo       Vulkan enabled -- make sure LunarG Vulkan SDK is installed.
 )
 
-cmake -S ggml -B ggml\build %CMAKE_GEN% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %GGML_FLAGS%
+cmake -S ggml -B ggml\build %CMAKE_GEN% -DCMAKE_BUILD_TYPE=%BUILD_TYPE% %GGML_FLAGS% -DMATH_LIBRARY=
 if errorlevel 1 ( echo. & echo [error] GGML CMake configure failed. & exit /b 1 )
 
 cmake --build ggml\build --config %BUILD_TYPE% -j 4
