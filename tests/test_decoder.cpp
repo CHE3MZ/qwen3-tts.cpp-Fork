@@ -142,6 +142,8 @@ int main(int argc, char ** argv) {
         printf("\n");
     }
     
+    int fail_count = 0;
+
     printf("Test 5: Compare with reference audio from %s\n", reference_path);
     std::vector<uint8_t> ref_data;
     if (!load_binary_file(reference_path, ref_data)) {
@@ -192,20 +194,30 @@ int main(int argc, char ** argv) {
             printf("  WARN: L2 distance < 0.1 (moderate match)\n");
         } else {
             printf("  FAIL: L2 distance >= 0.1 (poor match)\n");
+            fail_count++;
         }
         
+        // Correlation is undefined for near-silent signals
+        // (greedy decoding collapses to near-zero amplitude, making
+        //  correlation of two flat signals meaningless).
+        bool is_silent = (max_val - min_val) < 0.001f;
         if (correlation > 0.95) {
             printf("  PASS: Correlation > 0.95 (excellent)\n");
         } else if (correlation > 0.8) {
             printf("  PASS: Correlation > 0.8 (good)\n");
-        } else if (correlation > 0.5) {
-            printf("  WARN: Correlation > 0.5 (moderate)\n");
+        } else if (correlation > 0.5 || is_silent) {
+            printf("  %s: Correlation %s%.1f (%s)\n",
+                   is_silent ? "SKIP" : "WARN",
+                   is_silent ? "undefined (silent audio) — " : "",
+                   correlation * 100.0f,
+                   is_silent ? "L2 is the meaningful metric" : "moderate");
         } else {
             printf("  FAIL: Correlation <= 0.5 (poor)\n");
+            fail_count++;
         }
     }
     printf("\n");
     
     printf("=== All tests completed ===\n");
-    return 0;
+    return fail_count > 0 ? 1 : 0;
 }

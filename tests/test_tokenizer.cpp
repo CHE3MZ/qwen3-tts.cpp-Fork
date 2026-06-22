@@ -38,7 +38,10 @@ int main(int argc, char ** argv) {
     
     // Test 1: Check initial state
     printf("Test 1: Initial state\n");
-    assert(!tokenizer.is_loaded());
+    if (tokenizer.is_loaded()) {
+        printf("  FAIL: Tokenizer should not be loaded initially\n");
+        return 1;
+    }
     printf("  PASS: Tokenizer not loaded initially\n\n");
     
     if (!model_path) {
@@ -62,7 +65,10 @@ int main(int argc, char ** argv) {
         return 1;
     }
     
-    assert(tokenizer.is_loaded());
+    if (!tokenizer.is_loaded()) {
+        printf("  FAIL: Tokenizer should be loaded after load_from_gguf\n");
+        return 1;
+    }
     printf("  PASS: Tokenizer loaded successfully\n");
     printf("  Vocab size: %d\n", tokenizer.get_config().vocab_size);
     printf("  BOS token ID: %d\n", tokenizer.bos_token_id());

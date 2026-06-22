@@ -98,9 +98,12 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
         return false;
     }
     
-    model_.config.sample_rate = loader.get_u32("qwen3-tts.tokenizer.sample_rate", 24000);
-    model_.config.n_codebooks = loader.get_u32("qwen3-tts.tokenizer.num_codebooks", 16);
-    model_.config.codebook_size = loader.get_u32("qwen3-tts.tokenizer.codebook_size", 2048);
+    model_.config.sample_rate = loader.get_u32("qwen3-tts-tokenizer.sample_rate",
+                                loader.get_u32("qwen3-tts.tokenizer.sample_rate", 24000));
+    model_.config.n_codebooks = loader.get_u32("qwen3-tts-tokenizer.num_codebooks",
+                                loader.get_u32("qwen3-tts.tokenizer.num_codebooks", 16));
+    model_.config.codebook_size = loader.get_u32("qwen3-tts-tokenizer.codebook_size",
+                                  loader.get_u32("qwen3-tts.tokenizer.codebook_size", 2048));
     
     int64_t n_tensors = loader.get_n_tensors();
     int dec_tensor_count = 0;

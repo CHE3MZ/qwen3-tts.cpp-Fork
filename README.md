@@ -255,7 +255,7 @@ Full FFI surface for embedding into other languages. See `src/qwen3tts_c_api.h` 
 Qwen3Tts * tts = qwen3_tts_create("models", 4);
 Qwen3TtsResult res = qwen3_tts_synthesize(tts, "Hello", NULL);
 // res.audio, res.sample_rate, res.success, ...
-qwen3_tts_free(tts);
+qwen3_tts_destroy(tts);
 ```
 
 Thread-safe: one handle per worker thread.

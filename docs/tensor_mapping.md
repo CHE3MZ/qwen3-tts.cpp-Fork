@@ -186,50 +186,27 @@ talker.code_predictor.model.layers.{n}.mlp.down_proj.weight
 ```
 
 ### Tokenizer Encoder (Audio → Codes)
-```
-HuggingFace Name                                    → GGML Name
-─────────────────────────────────────────────────────────────────────────────
-encoder.conv.conv.weight                            → tok_enc.conv.weight
-encoder.conv.conv.bias                              → tok_enc.conv.bias
+The encoder uses `mimi_enc.*` tensors stored in the tokenizer GGUF.
+Full mapping in `scripts/convert_tokenizer_to_gguf.py` `ENCODER_PATTERNS` (lines 84-117).
 
-# Encoder transformer layers
-encoder.layers.{n}.self_attn.q_proj.weight          → tok_enc.blk.{n}.attn_q.weight
-encoder.layers.{n}.self_attn.k_proj.weight          → tok_enc.blk.{n}.attn_k.weight
-encoder.layers.{n}.self_attn.v_proj.weight          → tok_enc.blk.{n}.attn_v.weight
-encoder.layers.{n}.self_attn.o_proj.weight          → tok_enc.blk.{n}.attn_output.weight
-encoder.layers.{n}.input_layernorm.weight           → tok_enc.blk.{n}.attn_norm.weight
-encoder.layers.{n}.post_attention_layernorm.weight  → tok_enc.blk.{n}.ffn_norm.weight
-encoder.layers.{n}.mlp.fc1.weight                   → tok_enc.blk.{n}.ffn_up.weight
-encoder.layers.{n}.mlp.fc2.weight                   → tok_enc.blk.{n}.ffn_down.weight
-
-# RVQ codebooks (16 valid quantizers)
-encoder.quantizer.layers.{q}.codebook               → tok_enc.vq.{q}.codebook
-```
+Notable namespaces:
+- `mimi_enc.enc.*` — SEANet conv encoder layers and residual blocks
+- `mimi_enc.tfm.*` — Encoder transformer (attention + FFN)
+- `mimi_enc.rvq_sem.cb.*` — Semantic RVQ codebooks
+- `mimi_enc.rvq_acou.cb.*` — Acoustic RVQ codebooks
 
 ### Tokenizer Decoder (Codes → Audio / Vocoder)
-```
-HuggingFace Name                                    → GGML Name
-─────────────────────────────────────────────────────────────────────────────
-# Codebook embeddings
-decoder.codebook_semantic.weight                    → tok_dec.codebook_semantic.weight
-decoder.codebook.{c}.weight                         → tok_dec.codebook.{c}.weight
+The decoder uses `tok_dec.*` tensors stored in the tokenizer GGUF.
+Full mapping in `scripts/convert_tokenizer_to_gguf.py` `DECODER_PATTERNS` (lines 119-167).
 
-# Decoder transformer layers
-decoder.layers.{n}.self_attn.q_proj.weight          → tok_dec.blk.{n}.attn_q.weight
-decoder.layers.{n}.self_attn.k_proj.weight          → tok_dec.blk.{n}.attn_k.weight
-decoder.layers.{n}.self_attn.v_proj.weight          → tok_dec.blk.{n}.attn_v.weight
-decoder.layers.{n}.self_attn.o_proj.weight          → tok_dec.blk.{n}.attn_output.weight
-decoder.layers.{n}.input_layernorm.weight           → tok_dec.blk.{n}.attn_norm.weight
-decoder.layers.{n}.post_attention_layernorm.weight  → tok_dec.blk.{n}.ffn_norm.weight
-decoder.layers.{n}.mlp.fc1.weight                   → tok_dec.blk.{n}.ffn_up.weight
-decoder.layers.{n}.mlp.fc2.weight                   → tok_dec.blk.{n}.ffn_down.weight
-
-# Upsampling ConvNet (vocoder)
-decoder.upsample.{n}.conv.weight                    → tok_dec.upsample.{n}.weight
-decoder.upsample.{n}.conv.bias                      → tok_dec.upsample.{n}.bias
-decoder.conv_out.weight                             → tok_dec.conv_out.weight
-decoder.conv_out.bias                               → tok_dec.conv_out.bias
-```
+Notable namespaces:
+- `tok_dec.dec.{0-3}.snake.*` — Snake activation parameters
+- `tok_dec.dec.{0-3}.conv_t.*` — Transposed conv weights
+- `tok_dec.dec.{0-3}.res.*` — Residual block conv1/conv2 + snake act1/act2
+- `tok_dec.pre_tfm.blk.*` — Pre-transformer decoder layers
+- `tok_dec.vq_first.*` / `tok_dec.vq_rest.*` — Vocoder VQ codebooks
+- `tok_dec.upsample.*` — Upsampling layers (conv, dwconv, pwconv, norm, gamma)
+- `tok_dec.dec.{4-7}` — Output decoder blocks (conv_out)
 
 ## Tensor Count Summary
 

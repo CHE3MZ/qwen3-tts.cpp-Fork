@@ -12,14 +12,26 @@
 int main() {
     // Load model
     qwen3_tts::AudioTokenizerDecoder decoder;
-    if (!decoder.load_model("models/qwen3-tts-tokenizer-f16.gguf")) {
+    // Try common tokenizer GGUF filenames
+    const char * tok_paths[] = {
+        "models/qwen3-tts-tokenizer-f16-f32.gguf",
+        "models/qwen3-tts-tokenizer-f16-f16.gguf",
+        "models/qwen3-tts-tokenizer-f16.gguf",
+        nullptr
+    };
+    bool loaded = false;
+    for (int i = 0; tok_paths[i]; ++i) {
+        FILE * f = fopen(tok_paths[i], "rb");
+        if (f) { fclose(f); loaded = decoder.load_model(tok_paths[i]); break; }
+    }
+    if (!loaded) {
         fprintf(stderr, "Failed to load model: %s\n", decoder.get_error().c_str());
         return 1;
     }
     printf("Model loaded\n");
     
     // Load codes
-    std::ifstream f("reference/speech_codes.bin", std::ios::binary);
+    std::ifstream f("reference/det_speech_codes.bin", std::ios::binary);
     std::vector<int64_t> codes_i64(63 * 16);
     f.read(reinterpret_cast<char*>(codes_i64.data()), codes_i64.size() * sizeof(int64_t));
     f.close();
@@ -41,7 +53,7 @@ int main() {
            samples[0], samples[1], samples[2], samples[3], samples[4]);
     
     // Load reference
-    std::ifstream ref_f("reference/decoded_audio.bin", std::ios::binary | std::ios::ate);
+    std::ifstream ref_f("reference/det_decoded_audio.bin", std::ios::binary | std::ios::ate);
     size_t ref_size = ref_f.tellg();
     ref_f.seekg(0);
     std::vector<float> ref_samples(ref_size / sizeof(float));
@@ -70,6 +82,26 @@ int main() {
     double corr = cov / (sqrt(var_x) * sqrt(var_y) + 1e-10);
     
     printf("Correlation: %.6f\n", corr);
+    
+    // Check if audio is near-silent (correlation undefined for flat signals)
+    double max_abs = 0.0;
+    for (float s : samples) max_abs = std::max(max_abs, (double)fabs(s));
+    bool is_silent = max_abs < 0.001;
+    
+    if (corr > 0.95) {
+        printf("  PASS: Correlation > 0.95 (excellent match)\n");
+    } else if (corr > 0.8) {
+        printf("  PASS: Correlation > 0.8 (good match)\n");
+    } else if (corr > 0.5 || is_silent) {
+        printf("  %s: Correlation %s%.1f (%s)\n",
+               is_silent ? "SKIP" : "WARN",
+               is_silent ? "undefined (silent audio) — " : "",
+               corr * 100.0f,
+               is_silent ? "L2 is the meaningful metric" : "moderate");
+    } else {
+        printf("  FAIL: Correlation <= 0.5 (poor match)\n");
+        return 1;
+    }
     
     return 0;
 }

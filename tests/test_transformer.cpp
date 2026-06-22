@@ -326,7 +326,8 @@ int main(int argc, char ** argv) {
                 } else if (cos_sim > 0.90f) {
                     test_warn("Logits partially match reference (cosine > 0.90)");
                 } else {
-                    test_warn("Logits diverge from reference");
+                    fail_count++;
+                    printf("  FAIL: Logits diverge from reference (cosine=%.4f)\n", cos_sim);
                 }
             } else {
                 test_warn("Skipped logits comparison -- missing reference or output data");
@@ -452,7 +453,10 @@ int main(int argc, char ** argv) {
             } else if (matching_frames > cmp_frames / 2) {
                 test_warn("Partial match -- see statistics above");
             } else {
-                test_warn("Low match rate -- see statistics above");
+                fail_count++;
+                printf("  FAIL: Low match rate (%d/%d = %.1f%%)\n",
+                       matching_frames, cmp_frames,
+                       cmp_frames > 0 ? 100.0f * matching_frames / cmp_frames : 0.0f);
             }
         } else {
             test_warn("No reference codes available for comparison");
