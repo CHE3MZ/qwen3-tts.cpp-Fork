@@ -1086,6 +1086,29 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                     if (did != -2) language_id = did;
                 }
 
+                // Wire extended sampling params and logits callback
+                // (same setup as synthesize_internal — the ICL path bypasses it)
+                transformer_.set_extended_sampling(
+                    params.min_p, params.frequency_penalty, params.presence_penalty,
+                    params.dry_multiplier, params.dry_base, params.dry_allowed_length,
+                    params.dry_penalty_last_n, params.dyntemp_range, params.dyntemp_exponent);
+                if (progress_callback_) {
+                    transformer_.set_logits_callback(
+                        [this, &params](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                            int stop = progress_callback_(frame + 1, params.max_audio_tokens);
+                            if (stop) return stop;
+                            if (logits_callback_) return logits_callback_(frame, lg, sz, tok);
+                            return 0;
+                        });
+                } else if (logits_callback_) {
+                    transformer_.set_logits_callback(
+                        [this](int32_t frame, const float * lg, int32_t sz, int32_t tok) -> int {
+                            return logits_callback_ ? logits_callback_(frame, lg, sz, tok) : 0;
+                        });
+                } else {
+                    transformer_.clear_logits_callback();
+                }
+
                 transformer_.clear_kv_cache();
                 std::vector<int32_t> speech_codes;
 
