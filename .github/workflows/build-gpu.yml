@@ -23,7 +23,8 @@ on:
           - vulkan
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CUDA Windows — Chocolatey installs CUDA natively (no .NET bootstrapper)
+# CUDA Windows — Jimver/cuda-toolkit action installs CUDA 13.1 via network installer
+# Uses MSVC (ilammy/msvc-dev-cmd) as host compiler. CUDA 13.1 supports VS 2026.
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   build-cuda-windows:
@@ -45,7 +46,7 @@ jobs:
       - name: Setup CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.24
         with:
-          cuda: '12.8.0'
+          cuda: '13.1.0'
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
@@ -69,16 +70,11 @@ jobs:
       - name: Configure GGML (CUDA)
         shell: pwsh
         run: |
-          # VS 18 (2026) is newer than CUDA 12.8 supports officially.
-          # Set CUDAFLAGS so nvcc uses --allow-unsupported-compiler during
-          # CMake's compiler identification step (before CMAKE_CUDA_FLAGS applies).
-          $env:CUDAFLAGS = "--allow-unsupported-compiler"
           & cmake -S ggml -B ggml\build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_CUDA=ON `
             -DGGML_CUDA_F16=ON `
             "-DCUDAToolkit_ROOT=$env:CUDAToolkit_ROOT" `
-            "-DCMAKE_CUDA_FLAGS=--allow-unsupported-compiler -Wno-deprecated-gpu-targets" `
             "-DCMAKE_CUDA_HOST_COMPILER=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe"
           if ($LASTEXITCODE -ne 0) { Write-Error "GGML CUDA configure failed"; exit 1 }
 
