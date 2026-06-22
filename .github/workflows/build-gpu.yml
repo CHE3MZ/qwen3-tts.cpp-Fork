@@ -1,4 +1,4 @@
-# GPU Release Builds — CUDA (Windows), Metal (macOS), Vulkan (Windows)
+# GPU Release Builds — CPU (Windows), CUDA (Windows), Metal (macOS), Vulkan (Windows)
 #
 # Trigger: manual only (workflow_dispatch). No automatic triggers whatsoever.
 # Produces a zip artifact for each backend uploaded to the workflow run (30-day retention).
@@ -18,18 +18,81 @@ on:
         type: choice
         options:
           - all
-          - cuda
-          - metal
-          - vulkan
+          - cpu (Windows)
+          - cuda (Windows)
+          - metal (macOS)
+          - vulkan (Windows)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CPU Windows — MSVC + AVX2, no GPU dependencies. Fastest to build.
+# ──────────────────────────────────────────────────────────────────────────────
+jobs:
+  build-cpu-windows:
+    name: CPU (Windows)
+    if: ${{ github.event.inputs.backend == 'cpu (Windows)' || github.event.inputs.backend == 'all' }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure GGML (CPU)
+        shell: cmd
+        run: >
+          cmake -S ggml -B ggml\build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build GGML
+        shell: cmd
+        run: cmake --build ggml\build --config Release -j 4
+
+      - name: Configure project
+        shell: cmd
+        run: >
+          cmake -S . -B build-release
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build project
+        shell: cmd
+        run: cmake --build build-release --config Release -j 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "dist-cpu"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          New-Item -ItemType Directory -Path "$out\include" -Force | Out-Null
+
+          Copy-Item build-release\qwen3-tts-cli.exe $out\ -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll      | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
+
+          Write-Host "Artifact contents:"
+          Get-ChildItem $out | Select-Object Name, Length
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-tts-cpu-windows-x64
+          path: dist-cpu/
+          retention-days: 30
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CUDA Windows — Jimver/cuda-toolkit installs CUDA 12.8 via network installer.
 # Uses windows-2022 runner (VS 2022) — CUDA 12.x does not support VS 2026.
 # ──────────────────────────────────────────────────────────────────────────────
-jobs:
   build-cuda-windows:
     name: CUDA (Windows)
-    if: ${{ github.event.inputs.backend == 'cuda' || github.event.inputs.backend == 'all' }}
+    if: ${{ github.event.inputs.backend == 'cuda (Windows)' || github.event.inputs.backend == 'all' }}
     runs-on: windows-2022  # windows-latest has VS 2026 which CUDA 12.x doesn't support
 
     steps:
@@ -122,7 +185,7 @@ jobs:
 # ──────────────────────────────────────────────────────────────────────────────
   build-metal:
     name: Metal (macOS)
-    if: ${{ github.event.inputs.backend == 'metal' || github.event.inputs.backend == 'all' }}
+    if: ${{ github.event.inputs.backend == 'metal (macOS)' || github.event.inputs.backend == 'all' }}
     runs-on: macos-latest
 
     steps:
@@ -170,7 +233,7 @@ jobs:
 # ──────────────────────────────────────────────────────────────────────────────
   build-vulkan:
     name: Vulkan (Windows)
-    if: ${{ github.event.inputs.backend == 'vulkan' || github.event.inputs.backend == 'all' }}
+    if: ${{ github.event.inputs.backend == 'vulkan (Windows)' || github.event.inputs.backend == 'all' }}
     runs-on: windows-latest
 
     steps:
