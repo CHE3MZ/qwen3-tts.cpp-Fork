@@ -70,12 +70,17 @@ jobs:
       - name: Configure GGML (CUDA)
         shell: pwsh
         run: |
-          & cmake -S ggml -B ggml\build -G Ninja `
+          # Convert VCToolsInstallDir backslashes to forward slashes for cmake
+          $clPath = "$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe" -replace '\\', '/'
+          $cudaRoot = "$env:CUDAToolkit_ROOT" -replace '\\', '/'
+          Write-Host "cl.exe: $clPath"
+          Write-Host "CUDA root: $cudaRoot"
+          & cmake -S ggml -B ggml/build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DGGML_CUDA=ON `
             -DGGML_CUDA_F16=ON `
-            "-DCUDAToolkit_ROOT=$env:CUDAToolkit_ROOT" `
-            "-DCMAKE_CUDA_HOST_COMPILER=$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe"
+            "-DCUDAToolkit_ROOT=$cudaRoot" `
+            "-DCMAKE_CUDA_HOST_COMPILER=$clPath"
           if ($LASTEXITCODE -ne 0) { Write-Error "GGML CUDA configure failed"; exit 1 }
 
       - name: Build GGML
