@@ -23,14 +23,14 @@ on:
           - vulkan
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CUDA Windows — Jimver/cuda-toolkit action installs CUDA 13.1 via network installer
-# Uses MSVC (ilammy/msvc-dev-cmd) as host compiler. CUDA 13.1 supports VS 2026.
+# CUDA Windows — Jimver/cuda-toolkit installs CUDA 12.8 via network installer.
+# Uses windows-2022 runner (VS 2022) — CUDA 12.x does not support VS 2026.
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   build-cuda-windows:
     name: CUDA (Windows)
     if: ${{ github.event.inputs.backend == 'cuda' || github.event.inputs.backend == 'all' }}
-    runs-on: windows-latest
+    runs-on: windows-2022  # windows-latest has VS 2026 which CUDA 12.x doesn't support
 
     steps:
       - name: Checkout
@@ -46,7 +46,7 @@ jobs:
       - name: Setup CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.24
         with:
-          cuda: '13.1.0'
+          cuda: '12.8.0'
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
