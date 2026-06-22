@@ -1059,6 +1059,28 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     // ICL mode: encode reference audio to discrete codes using Mimi encoder
     if (params.icl_mode && !params.ref_text.empty()) {
         if (mimi_encoder_loaded_) {
+            // Memory tracking (same as synthesize_internal)
+            auto snap_mem = [&](const char * label) {
+                process_memory_snapshot mem;
+                if (!get_process_memory_snapshot(mem)) return;
+                if (result.mem_rss_start_bytes == 0) {
+                    result.mem_rss_start_bytes   = mem.rss_bytes;
+                    result.mem_phys_start_bytes  = mem.phys_footprint_bytes;
+                }
+                result.mem_rss_end_bytes   = mem.rss_bytes;
+                result.mem_phys_end_bytes  = mem.phys_footprint_bytes;
+                if (mem.rss_bytes            > result.mem_rss_peak_bytes)
+                    result.mem_rss_peak_bytes  = mem.rss_bytes;
+                if (mem.phys_footprint_bytes > result.mem_phys_peak_bytes)
+                    result.mem_phys_peak_bytes = mem.phys_footprint_bytes;
+                if (params.print_timing)
+                    fprintf(stderr, "  [mem] %-24s rss=%s phys=%s\n",
+                            label, format_bytes(mem.rss_bytes).c_str(),
+                            format_bytes(mem.phys_footprint_bytes).c_str());
+            };
+
+            snap_mem("synth/start");
+
             // Encode reference audio to codec codes
             std::vector<int32_t> ref_codes;
             int32_t n_ref_frames = 0;
@@ -1074,6 +1096,8 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                     result.error_msg = "Failed to tokenize text";
                     return result;
                 }
+
+                snap_mem("synth/after-tokenize");
 
                 int32_t language_id = params_language_id(params);
 
@@ -1127,6 +1151,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                     params.subtalker_top_p);
 
                 result.t_generate_ms = get_time_ms() - t_gen;
+                snap_mem("synth/after-generate");
 
                 if (!gen_ok) {
                     result.error_msg = "ICL generation failed: " + transformer_.get_error();
@@ -1147,6 +1172,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                 full_codes.insert(full_codes.end(), speech_codes.begin(), speech_codes.end());
 
                 if (!decode_codes_streaming(full_codes, result, params)) return result;
+                snap_mem("synth/after-decode");
 
                 // Trim the reference portion using float ratio to avoid overflow
                 if (n_ref_frames > 0 && !result.audio.empty()) {
@@ -1167,6 +1193,7 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                 result.sample_rate = audio_decoder_.get_config().sample_rate;
                 result.success     = true;
                 result.t_total_ms  = get_time_ms() - t_total_start;
+                snap_mem("synth/end");
                 return result;
             }
             fprintf(stderr, "  [ICL] Mimi encode failed: %s — falling back to x-vector\n",
