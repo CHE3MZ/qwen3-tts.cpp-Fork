@@ -37,7 +37,6 @@ All critical bugs resolved. Codebase is functionally solid. Next session should 
 ## Next Steps
 1. Commit all changes (user responsibility)
 2. Regenerate `test_mimi_encoder` reference for proper Mimi validation
-3. Optionally clean up `ggml-master/` stray directory
 
 ## References
 * Architecture: `docs/architecture.md`
