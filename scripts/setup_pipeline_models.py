@@ -206,6 +206,8 @@ def convert_gguf(
                 str(out_tok),
                 "--type",
                 "f16",
+                "--mimi-type",
+                "f32",  # F32 Mimi = 100% exact ICL voice cloning (vs 98.9% for F16)
             ],
             cwd=REPO_ROOT,
         )
@@ -275,7 +277,7 @@ def main() -> int:
     base_dir = models_dir / "Qwen3-TTS-12Hz-0.6B-Base"
     tokenizer_dir = models_dir / "Qwen3-TTS-Tokenizer-12Hz"
     out_tts = models_dir / "qwen3-tts-0.6b-f16.gguf"
-    out_tok = models_dir / "qwen3-tts-tokenizer-f16.gguf"
+    out_tok = models_dir / "qwen3-tts-tokenizer-f16-f32.gguf"
     out_coreml = models_dir / "coreml" / "code_predictor.mlpackage"
 
     hf_token = args.hf_token.strip() or None

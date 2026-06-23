@@ -23,7 +23,22 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = PROJECT_ROOT / "models"
 HF_MODEL_PATH = MODEL_DIR / "Qwen3-TTS-12Hz-0.6B-Base"
 REF_AUDIO_PATH = PROJECT_ROOT / "clone.wav"
-CLI_BINARY = PROJECT_ROOT / "build" / "qwen3-tts-cli"
+
+# Locate the CLI binary — try build-ninja first (Ninja builds), then build (Make/MSVC)
+def _find_cli_binary() -> Path:
+    candidates = [
+        PROJECT_ROOT / "build-ninja" / "qwen3-tts-cli",
+        PROJECT_ROOT / "build-ninja" / "qwen3-tts-cli.exe",
+        PROJECT_ROOT / "build" / "qwen3-tts-cli",
+        PROJECT_ROOT / "build" / "qwen3-tts-cli.exe",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    # Return the most likely path even if missing — the error will be clear
+    return PROJECT_ROOT / "build-ninja" / "qwen3-tts-cli"
+
+CLI_BINARY = _find_cli_binary()
 
 SHORT_TEXT = "Hello."
 LONG_TEXT = "Okay. Yeah. I resent you. I love you. I respect you. But you know what? You blew it! And thanks to you."

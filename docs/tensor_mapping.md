@@ -145,11 +145,11 @@ talker.model.layers.{n}.mlp.down_proj.weight        → talker.blk.{n}.ffn_down.
 ```
 HuggingFace Name                                    → GGML Name
 ─────────────────────────────────────────────────────────────────────────────
-# 16 codebook embeddings (indices 0-14, skipping first codebook)
+# 15 codebook embeddings (indices 0-14, for codebooks 1-15; codebook 0 uses talker output)
 talker.code_predictor.model.codec_embedding.{c}.weight
                                                     → code_pred.codec_embd.{c}.weight
 
-# 16 LM heads for each codebook
+# 15 LM heads (one per codebook 1-15)
 talker.code_predictor.lm_head.{c}.weight            → code_pred.lm_head.{c}.weight
 
 talker.code_predictor.model.norm.weight             → code_pred.output_norm.weight
