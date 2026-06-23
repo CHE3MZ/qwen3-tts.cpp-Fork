@@ -658,7 +658,7 @@ mimi.upsampling_ratios        [8, 6, 5, 4]
 | K-quants (Q6_K–Q2_K) | Not supported | Python gguf library doesn't implement them. C++ runtime fully supports loading them if generated elsewhere |
 | Abort on GPU backends | Partial | Abort callback fires between frame steps only; no mid-graph cancel on Vulkan/CUDA/Metal |
 | Batch = true GPU parallelism | No | Round-robin sequential per frame step, not data-parallel |
-| M-RoPE | 1D approximation | Uses NEOX-style 1D positions; equivalent for single-batch, may diverge for very long batched sequences |
+| M-RoPE | 1D approximation | The talker uses M-RoPE (multi-dimensional) but for TTS all three position dimensions (temporal, height, width) are set to the same sequential counter — identical to Python's behaviour (`position_ids = cache_position.expand(3, ...)` with all rows equal). No quality impact. |
 | ICL slow on CPU | Expected | Mimi encoder always runs on CPU even on GPU builds (its transformer uses plain scalar C++); ~13s for a 6.8s reference clip |
 | Greedy decoding (temperature=0) | Silent audio | Codec LMs collapse to silence/pad tokens without sampling noise. Use temperature ≥ 0.1 |
 | F32 1.7B conversion | OOM on <16 GB RAM | 1.7B F32 requires ~7.7 GB on disk and ~12–15 GB peak RAM during conversion |

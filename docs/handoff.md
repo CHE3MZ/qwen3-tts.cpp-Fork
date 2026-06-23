@@ -1,12 +1,13 @@
-# Handoff: Second Code Audit + Bug Fixes
+# Handoff: Third Audit Session — Full Codebase Audit
 <!-- Last updated: 2026-06-23 -->
 
 ## Summary
-Full source-code read (no docs, ground truth only) found 4 real bugs. All fixed. Two stale
-"Known Limitations" entries in architecture.md corrected. Working tree clean after commit.
+Third session: full codebase audit (all src, tests, scripts, tools, docs) from ground truth.
+Found and fixed 3 bugs in scripts/docs, implemented Qwen2 pre-tokenizer, verified M-RoPE
+is not actually a limitation, corrected all stale documentation. Codebase is production-ready.
 
 ## Objective
-All real bugs from the second audit are fixed. Codebase is production-ready.
+All known bugs fixed. All docs accurate. Tokenizer now matches Python's Qwen2 pre-tokenizer.
 
 ## Status
 
@@ -73,19 +74,25 @@ All real bugs from the second audit are fixed. Codebase is production-ready.
 
 ## Open Issues
 * **ICL slow on CPU** — Mimi encoder is scalar C++, ~13s for 6.8s clip. No GPU path.
-* **M-RoPE uses 1D positions** — fine for single-batch, may diverge for long ICL sequences.
 * **`test_mimi_encoder` reference stale** — reference codes from different audio file; needs
   regeneration with `scripts/validate_mimi_encoder.py`.
 * **K-quants** — Q6_K–Q2_K not supported by Python converter.
-* **Tokenizer pre-tokenization** — no regex split on punctuation
-  (documented limitation in `text_tokenizer.cpp`).
+* **Tokenizer pre-tokenization** — Qwen2 regex now implemented. Previously documented as
+  a limitation; resolved in the third audit session.
+
+## Verified NOT Issues (previously flagged, now confirmed correct)
+* **M-RoPE 1D** — Python's talker sets all 3 M-RoPE dimensions to the same sequential
+  counter (`position_ids = cache_position.expand(3, ...)`). The 3D structure only matters
+  for vision inputs; TTS has none. Our 1D RoPE is bit-identical to Python's behaviour.
+* **Batch rep/freq/presence penalties** — correctly implemented per slot in `generate_batch`.
+* **KV cache realloc** — `extend_kv_cache_impl` saves and restores all K/V data.
 
 ## Next Steps
-1. Commit the current fixes
-2. Regenerate `test_mimi_encoder` reference
+1. Commit all current changes
+2. Regenerate `test_mimi_encoder` reference with `scripts/validate_mimi_encoder.py`
 
 ## References
 * Architecture: `docs/architecture.md`
-* Changed files: `src/qwen3_tts.cpp`, `src/gguf_loader.cpp`, `src/tts_transformer.cpp`,
-  `docs/architecture.md`
+* Changed files this session: `src/text_tokenizer.cpp`, `scripts/setup_pipeline_models.py`,
+  `scripts/compare_e2e.py`, `docs/tensor_mapping.md`, `docs/architecture.md`, `AGENTS.md`
 * HF repo: `https://huggingface.co/librellama/qwen3-tts-GGUF`

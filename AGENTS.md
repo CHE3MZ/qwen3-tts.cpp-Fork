@@ -187,7 +187,7 @@ bash scripts/run_all_tests.sh           # Full suite
 ## Known Limitations
 
 - F16 model weights cause autoregressive divergence vs Python's float32 — speech codes differ but audio is perceptually equivalent
-- M-RoPE uses 1D positions (equivalent for single-batch, may differ for batched inference)
+- M-RoPE uses 1D positions — matches Python's actual behaviour: all 3 M-RoPE dimensions use the same sequential counter for TTS (the 3D structure only diverges for vision inputs, which TTS never has). No quality impact.
 - **Batch inference** — implemented as round-robin sequential decode across N utterances per frame step. Functionally correct; not true data-parallel GPU batch inference (all N entries share one KV cache slot each, decoded one at a time per step). See `synthesize_batch()` in `qwen3_tts.cpp` and `generate_batch()` in `tts_transformer.cpp`.
 - **ICL voice cloning** — fully implemented. The Mimi audio encoder is loaded from the tokenizer GGUF and achieves 98.9% code match vs Python (F16) / 100% (F32). `generate_icl()` is used when `--ref-text` is provided alongside `--reference`.
 - **Abort callback** — wired to the CPU backend only via `ggml_backend_cpu_set_abort_callback`. Has no effect on GPU backends (Vulkan/CUDA/Metal) during heavy compute steps — those schedulers do not support mid-graph abort. On GPU builds, aborting is only possible between frame steps (checked in the generate loop).
