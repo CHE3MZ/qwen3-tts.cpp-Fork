@@ -741,7 +741,10 @@ int32_t Qwen3TTS::synthesize_codes(const std::string & text,
     tts_result result;
     if (!models_loaded_) { error_msg_ = "Models not loaded"; return -1; }
     std::vector<int32_t> codes;
-    const int32_t spk_dim = transformer_.get_config().hidden_size;
+    // Use speaker_embedding_dim_, NOT hidden_size — they differ on 1.7B
+    // (hidden_size=2048, embedding_dim=1024). Passing hidden_size would cause
+    // build_prefill_graph to read 8KB past the end of the vector.
+    const int32_t spk_dim = speaker_embedding_dim_;
     std::vector<float> zero_emb(spk_dim, 0.0f);
     synthesize_internal(text, zero_emb.data(), params, result, &codes);
     if (!result.success) { error_msg_ = result.error_msg; return -1; }
@@ -1005,11 +1008,11 @@ tts_result Qwen3TTS::synthesize(const std::string & text, const tts_params & par
     }
 
     // Default: no voice reference — use a zero speaker embedding.
-    // Size must match the encoder output dimension, not the transformer hidden size.
-    // We read it from the transformer config's expected speaker dim (stored as hidden_size
-    // in the talker config equals 1024 for both 0.6B and 1.7B, but use the canonical
-    // speaker_encoder embedding_dim via the config to be future-proof).
-    const int32_t spk_dim = transformer_.get_config().hidden_size; // always matches embedding_dim
+    // Size must match the speaker encoder output dimension (always 1024),
+    // NOT the transformer hidden size (which is 2048 on 1.7B).
+    // Using hidden_size here would cause build_prefill_graph to read 8KB
+    // past the end of the vector on 1.7B models.
+    const int32_t spk_dim = speaker_embedding_dim_;
     std::vector<float> zero_emb(spk_dim, 0.0f);
     return synthesize_internal(text, zero_emb.data(), params, result);
 }
@@ -1688,7 +1691,11 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples, int
         } else {
             // Skip unknown chunk — pad to even boundary per RIFF spec
             uint32_t skip = chunk_size + (chunk_size & 1u);
-            fseek(f, (long)skip, SEEK_CUR);
+#ifdef _WIN32
+            _fseeki64(f, (int64_t)skip, SEEK_CUR);
+#else
+            fseeko(f, (off_t)skip, SEEK_CUR);
+#endif
         }
     }
     fclose(f);

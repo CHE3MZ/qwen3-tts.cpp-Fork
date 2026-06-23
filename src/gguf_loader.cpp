@@ -334,7 +334,13 @@ bool load_tensor_data_from_file(
 
         read_buf.resize(nbytes);
 
-        if (fseek(f, (long)(data_offset + offset), SEEK_SET) != 0) {
+        if (
+#ifdef _WIN32
+            _fseeki64(f, (int64_t)(data_offset + offset), SEEK_SET) != 0
+#else
+            fseeko(f, (off_t)(data_offset + offset), SEEK_SET) != 0
+#endif
+        ) {
             error_msg = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
             ggml_backend_free(backend);

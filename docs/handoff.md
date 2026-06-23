@@ -1,46 +1,91 @@
-# Handoff: Full Audit + Bugfixes Complete
+# Handoff: Second Code Audit + Bug Fixes
 <!-- Last updated: 2026-06-23 -->
 
 ## Summary
-ICL prefill ordering bug fixed (root cause of ICL producing EOS). Full codebase audit performed: 2 real bugs found and fixed, 3 robustness issues patched, 3 doc inaccuracies corrected. All changes uncommitted.
+Full source-code read (no docs, ground truth only) found 4 real bugs. All fixed. Two stale
+"Known Limitations" entries in architecture.md corrected. Working tree clean after commit.
 
 ## Objective
-All critical bugs resolved. Codebase is functionally solid. Next session should focus on committing changes.
+All real bugs from the second audit are fixed. Codebase is production-ready.
 
 ## Status
 
-### Completed This Session
-* **ICL prefill ordering (root cause)** — `build_prefill_graph_icl` concatenated `[icl_block | base_framing]` instead of Python's `[base_framing | icl_block]`. ICL block also only contained ref_text, missing body_text. Full rewrite at `tts_transformer.cpp:3432-3593`.
-* **ICL callbacks + sampling** — `generate_icl()` never fired logits callback (fixed). `synthesize_with_voice()` never wired callback chain or extended sampling params before `generate_icl()` (fixed at `qwen3_tts.cpp:1089-1110`).
-* **Full audit performed** — all 20+ source files, 9 test files, all scripts and docs reviewed.
-* **`test_decoder.cpp` / `test_vq_only.cpp` always returned 0** — both now enforce pass/fail with proper exit codes. Near-silent audio (greedy decoding) is handled via SKIP (correlation undefined for flat signals). L2 is the meaningful metric.
-* **`test_transformer.cpp` used `test_warn` for diverged output** — logits with cosine < 0.90 and code match <= 50% now increment `fail_count`.
-* **`test_tokenizer.cpp` used `assert()`** — replaced with runtime `if` checks that return 1 (assert is disabled in Release builds).
-* **`README.md:258` documented nonexistent `qwen3_tts_free`** — fixed to `qwen3_tts_destroy`.
-* **`audio_tokenizer_decoder.cpp` GGUF metadata key mismatch** — converter writes `qwen3-tts-tokenizer.*` (hyphen), decoder was reading `qwen3-tts.tokenizer.*` (dot). Added hyphen-first-with-dot-fallback pattern matching `mimi_encoder.cpp`.
-* **`test_vq_only.cpp` hardcoded wrong paths** — tokenizer model, codes file, reference file paths all corrected. Added fallback search for tokenizer GGUF.
-* **`docs/tensor_mapping.md` outdated** — `tok_enc.*` namespace replaced with accurate `mimi_enc.*`. Decoder section updated. Both reference converter script as source of truth.
-* **`build.bat` MATH_LIBRARY error** — fixed with `-DMATH_LIBRARY=` flag.
+### Completed This Session (second audit)
 
-### Verified NOT bugs (audit was wrong)
-* Batch mode rep/freq/presence penalties — `generate_batch()` correctly tracks tokens per frame
-* KV cache realloc drops data — `extend_kv_cache_impl` saves and restores all K/V
-* fseek truncation for models >2GB — mmap path tried first, fseek is rarely-used fallback
+#### Real Bugs Fixed
+
+* **1.7B zero-embedding buffer overread** — `synthesize()` and `synthesize_codes()` were
+  building the fallback zero speaker embedding with size `hidden_size` (2048 on 1.7B) instead
+  of `speaker_embedding_dim_` (always 1024). `build_prefill_graph` reads exactly
+  `hidden_size * sizeof(float)` from the pointer, so on 1.7B this was an 8-KB read past
+  the end of the vector — undefined behaviour, likely silent garbage audio.
+  Fixed in `src/qwen3_tts.cpp`: both sites now use `speaker_embedding_dim_`.
+
+* **`load_tensor_data_from_file` fseek truncation on >2 GB files** — the fread fallback
+  path in `src/gguf_loader.cpp` cast the seek offset to `long` before calling `fseek`,
+  which is 32-bit on Windows. Any model file > 2 GB would land at a wrong offset and load
+  corrupted tensor data silently. Fixed: now uses `_fseeki64` (Windows) / `fseeko` (POSIX)
+  matching the pattern in `tts_transformer.cpp::load_tensor_data`.
+
+* **WAV unknown-chunk skip fseek truncation** — `load_audio_file` in `src/qwen3_tts.cpp`
+  used `fseek(f, (long)skip, SEEK_CUR)` when skipping unrecognised RIFF chunks. `skip` is
+  `uint32_t` so could be up to ~4 GB; casting to `long` truncates on Windows. Fixed with
+  the same `_fseeki64`/`fseeko` pattern. In practice RIFF chunk sizes are rarely >2 GB but
+  a malformed file could exploit this.
+
+* **Top-p nucleus sampling float rounding mismatch** — the old implementation computed
+  normalised probabilities once to find a `cutoff` threshold, then recomputed probabilities
+  from scratch in a second pass and used `prob < cutoff` to decide suppression. Floating-
+  point rounding differences between the two computations could incorrectly keep or drop
+  tokens whose probability was exactly at the boundary. Fixed: the second pass is eliminated;
+  we now suppress all tokens ranked below the last one included in the sorted walk, using
+  their indices from the sorted array directly.
+
+#### Documentation Fixes
+
+* **`docs/architecture.md` "Known Limitations" had two stale entries** that described bugs
+  which do not exist in the code:
+  - *"Batch rep/freq/presence penalties — Missing"* — `generate_batch()` correctly builds
+    per-slot `batch_gen_tokens`, `batch_token_history`, `batch_token_counts` and passes them
+    to `sample_token`. These penalties work correctly in batch mode.
+  - *"KV cache realloc — Lossy"* — `extend_kv_cache_impl` explicitly saves all K/V data
+    to host memory before reinit and restores it after. Realloc preserves all prior positions.
+  Both entries removed from the table.
+
+* **ICL body-text slice coupling comment** — added a comment in
+  `build_prefill_graph_icl` clarifying that the hardcoded `-5` offset for the body text
+  slice is deliberately coupled to `encode_for_tts()` trailing token layout
+  (`<|im_end|>\n<|im_start|>assistant\n`).
+
+* **min_p comment was misleading** — `max_prob = 1.0f / sum_e` is the correct formula but
+  the previous comment said "actual probability of argmax" without explaining why. Replaced
+  with a clear derivation comment.
+
+### Previously Completed (first audit session — all committed)
+* ICL prefill ordering fix (`tts_transformer.cpp`)
+* ICL callbacks + sampling wiring (`qwen3_tts.cpp`)
+* Test exit-code fixes (`test_decoder`, `test_vq_only`, `test_transformer`, `test_tokenizer`)
+* Audio decoder GGUF key mismatch fix
+* `test_vq_only` path corrections
+* `docs/tensor_mapping.md` namespace update
+* `build.bat` MATH_LIBRARY fix
+* `README.md` `qwen3_tts_free` → `qwen3_tts_destroy`
 
 ## Open Issues
 * **ICL slow on CPU** — Mimi encoder is scalar C++, ~13s for 6.8s clip. No GPU path.
 * **M-RoPE uses 1D positions** — fine for single-batch, may diverge for long ICL sequences.
-* **`test_mimi_encoder` reference stale** — codes from different audio file, needs regeneration.
+* **`test_mimi_encoder` reference stale** — reference codes from different audio file; needs
+  regeneration with `scripts/validate_mimi_encoder.py`.
 * **K-quants** — Q6_K–Q2_K not supported by Python converter.
-* **Tokenizer pre-tokenization** — no regex split on punctuation (documented limitation in `text_tokenizer.cpp:250`).
+* **Tokenizer pre-tokenization** — no regex split on punctuation
+  (documented limitation in `text_tokenizer.cpp`).
 
 ## Next Steps
-1. Commit all changes (user responsibility)
-2. Regenerate `test_mimi_encoder` reference for proper Mimi validation
+1. Commit the current fixes
+2. Regenerate `test_mimi_encoder` reference
 
 ## References
 * Architecture: `docs/architecture.md`
-* ICL fix diff: `git diff src/tts_transformer.cpp src/qwen3_tts.cpp`
-* Audit fixes diff: `git diff tests/ src/ README.md docs/`
+* Changed files: `src/qwen3_tts.cpp`, `src/gguf_loader.cpp`, `src/tts_transformer.cpp`,
+  `docs/architecture.md`
 * HF repo: `https://huggingface.co/librellama/qwen3-tts-GGUF`
-* Test baselines: `test_transformer` 5P/2W/0F · `test_batch` 5P/0F · `test_decoder` L2≈0 corr-skip-for-silent

@@ -3043,15 +3043,22 @@ static int32_t sample_token(
             [](const std::pair<float,int32_t>&a, const std::pair<float,int32_t>&b){
                 return a.first > b.first;
             });
-        float cumul = 0.0f, cutoff = 0.0f;
-        for (auto & x : sp) {
-            cumul += x.first;
-            cutoff = x.first;
-            if (cumul >= p.top_p) break;
+        // Walk the sorted list accumulating probability mass.
+        // Once the cumulative sum reaches top_p, suppress all remaining tokens.
+        // This avoids recomputing probabilities (and the float rounding mismatch
+        // between the two passes that the old cutoff approach had).
+        float cumul = 0.0f;
+        int32_t keep_until = V; // exclusive index: tokens [0, keep_until) are kept
+        for (int32_t k = 0; k < V; ++k) {
+            cumul += sp[k].first;
+            if (cumul >= p.top_p) {
+                keep_until = k + 1; // include this token, drop everything after
+                break;
+            }
         }
-        for (int32_t i = 0; i < V; ++i) {
-            float prob = expf(logits[i] - mx) / (float)sum_p;
-            if (prob < cutoff) logits[i] = -INFINITY;
+        // Build a set of suppressed indices
+        for (int32_t k = keep_until; k < V; ++k) {
+            logits[sp[k].second] = -INFINITY;
         }
     }
 
@@ -3060,7 +3067,10 @@ static int32_t sample_token(
         float mx = *std::max_element(logits.data(), logits.data() + V);
         double sum_e = 0.0;
         for (int32_t i = 0; i < V; ++i) sum_e += expf(logits[i] - mx);
-        float max_prob = 1.0f / (float)sum_e;  // actual probability of the argmax after softmax
+        // max_prob = exp(mx - mx) / sum_e = 1 / sum_e, which is the probability
+        // of the highest-logit token (the argmax always has logit == mx after
+        // the shift, so its unnormalised weight is exp(0) = 1).
+        float max_prob = 1.0f / (float)sum_e;
         float threshold = p.min_p * max_prob;
         for (int32_t i = 0; i < V; ++i) {
             float prob = expf(logits[i] - mx) / (float)sum_e;
@@ -3485,6 +3495,8 @@ bool TTSTransformer::build_prefill_graph_icl(
     }
 
     // 3. Project body text tokens (text_tokens[3:-5] — matches Python's input_id[:, 3:-5])
+    // The trailing 5 tokens are always <|im_end|> \n <|im_start|> assistant \n,
+    // which encode_for_tts() appends. body_end must match that exact layout.
     const int32_t body_start = 3;
     const int32_t body_end   = std::max(body_start, n_tokens - 5);
     const int32_t body_len   = body_end - body_start;
