@@ -3410,24 +3410,29 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
 
 // ---------------------------------------------------------------------------
 // ICL prefill builder
-// Matches Python's generate_icl_prompt() (streaming path).
+// Matches Python's generate_icl_prompt() (both streaming and non-streaming).
 //
 // Python reference (modeling_qwen3_tts.py:2188-2197):
 //   text_id       = input_id[:, 3:-5]       -- body text, no role/trailing tokens
 //   ref_id        = ref_ids[:, 3:-2]        -- ref text body, no role tokens
 //   text_embed    = proj(cat([ref_id, text_id, eos]))
 //   codec_embed   = [codec_bos | sum(16×cb_embed(frame))]
-//   icl_block = text_embed[:codec_len] + codec_embed
-//   trailing  = text_embed[codec_len:]  (or tts_pad if codec_len ≥ text_len)
+//
+//   non_streaming_mode:
+//     icl_block = [text_embed + codec_pad | codec_embed + tts_pad]
+//     trailing  = tts_pad_embed
+//   streaming (text_len > codec_len):
+//     icl_block = text_embed[:codec_len] + codec_embed
+//     trailing  = text_embed[codec_len:]
+//   streaming (codec_len >= text_len):
+//     icl_block = pad(text_embed, codec_len, tts_pad) + codec_embed
+//     trailing  = tts_pad_embed
+//
 //   talker_input_embed = [base_framing | icl_block]
 //
 // The key difference from the base (non-ICL) path: ALL text (ref + body + eos)
 // goes into the ICL overlay. The base prefill's first_text_overlaid position
 // and base_trailing are dropped — the ICL block replaces them.
-//
-// NOTE: non_streaming_mode affects the base framing via build_prefill_graph(),
-// but the ICL overlay itself only supports streaming-style (pre-existing
-// limitation).
 // ---------------------------------------------------------------------------
 bool TTSTransformer::build_prefill_graph_icl(
         const int32_t * text_tokens, int32_t n_tokens,
@@ -3537,19 +3542,40 @@ bool TTSTransformer::build_prefill_graph_icl(
         }
     }
 
-    // 7. Create ICL overlay (streaming style — matches Python non_streaming_mode=False)
+    // 7. Create ICL overlay
     // Python (modeling_qwen3_tts.py:2014-2019):
-    //   if text_lens > codec_lens:
-    //       icl_block = text_embed[:, :codec_lens] + codec_embed
-    //       trailing  = text_embed[:, codec_lens:]
-    //   else:
-    //       text_embed = pad(text_embed, codec_lens, tts_pad)
-    //       icl_block = text_embed + codec_embed
-    //       trailing  = tts_pad_embed
+    //   non_streaming_mode:
+    //     icl_block = [text_embed + codec_pad | codec_embed + tts_pad]
+    //     trailing = tts_pad_embed
+    //   streaming (text_lens > codec_lens):
+    //     icl_block = text_embed[:, :codec_lens] + codec_embed
+    //     trailing  = text_embed[:, codec_lens:]
+    //   streaming (codec_lens >= text_lens):
+    //     text_embed = pad(text_embed, codec_lens, tts_pad)
+    //     icl_block = text_embed + codec_embed
+    //     trailing  = tts_pad_embed
     std::vector<float> icl_block;
     std::vector<float> icl_trailing;
 
-    if (text_len > codec_len) {
+    if (non_streaming_mode) {
+        std::vector<float> codec_pad_row(H);
+        if (!lookup_single_embedding_row(model_.codec_embd, cfg.codec_pad_id, codec_pad_row.data())) {
+            return false;
+        }
+        const int32_t total_len = text_len + codec_len;
+        icl_block.resize((size_t)total_len * H);
+        for (int32_t t = 0; t < text_len; ++t) {
+            const float * te = text_embed.data() + (size_t)t * H;
+            float * out = icl_block.data() + (size_t)t * H;
+            for (int h = 0; h < H; ++h) out[h] = te[h] + codec_pad_row[h];
+        }
+        for (int32_t t = 0; t < codec_len; ++t) {
+            const float * ce = codec_embed.data() + (size_t)t * H;
+            float * out = icl_block.data() + (size_t)(text_len + t) * H;
+            for (int h = 0; h < H; ++h) out[h] = ce[h] + tts_pad_embed.data()[h];
+        }
+        icl_trailing = tts_pad_embed;
+    } else if (text_len > codec_len) {
         icl_block.resize((size_t)codec_len * H);
         for (int32_t t = 0; t < codec_len; ++t) {
             const float * te = text_embed.data()  + (size_t)t * H;
