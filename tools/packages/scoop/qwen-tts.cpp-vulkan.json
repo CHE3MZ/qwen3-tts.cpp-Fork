@@ -1,0 +1,43 @@
+{
+    "version": "release-1.0",
+    "description": "C++17/GGML inference for Qwen3-TTS. Vulkan GPU build — works on AMD, Intel, and NVIDIA GPUs. Requires Vulkan runtime (included in most GPU drivers).",
+    "homepage": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-1.0/qwen-tts-windows-x64-vulkan.zip",
+            "hash": "PLACEHOLDER_SHA256_VULKAN"
+        }
+    },
+    "extract_dir": "qwen-tts-windows-x64-vulkan",
+    "bin": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "shortcuts": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "checkver": {
+        "github": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+        "regex": "release-([\\d.]+)"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-$version/qwen-tts-windows-x64-vulkan.zip"
+            }
+        }
+    },
+    "notes": [
+        "qwen-tts.cpp-vulkan (Vulkan GPU build) installed. Command: qwen-tts",
+        "",
+        "Requires Vulkan runtime — installed with most GPU drivers.",
+        "If generation fails, install the Vulkan runtime from:",
+        "  https://vulkan.lunarg.com/sdk/home",
+        "",
+        "Download models:",
+        "  See https://github.com/CHE3MZ/qwen3-tts.cpp-Fork#model-setup",
+        "",
+        "Quick start:",
+        "  qwen-tts -m models -t \"Hello world\" -o hello.wav"
+    ]
+}

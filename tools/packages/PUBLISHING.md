@@ -74,35 +74,52 @@ Alternatively: GitHub shows SHA256 checksums in the release page sidebar once th
    ```
    scoop-qwen-tts/
      bucket/
-       qwen-tts.cpp.json
+       qwen-tts.cpp.json           ← CPU build (works everywhere)
+       qwen-tts.cpp-vulkan.json    ← Vulkan GPU (AMD/Intel/NVIDIA)
+       qwen-tts.cpp-cuda.json      ← CUDA GPU (NVIDIA only)
    ```
-3. Copy `tools/packages/scoop/qwen-tts.cpp.json` into `bucket/`.
+3. Copy all three files from `tools/packages/scoop/` into `bucket/`.
 
 ### Per-release update
-Edit `bucket/qwen-tts.cpp.json` — update two fields:
+Edit the manifest for the variant you're publishing — update two fields:
 ```json
 {
-    "version": "release-1.0",
+    "version": "release-1.1",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-1.0/qwen-tts-windows-x64-cpu.zip",
-            "hash": "<YOUR_SHA256_HERE>"
+            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-1.1/qwen-tts-windows-x64-cpu.zip",
+            "hash": "<SHA256_OF_CPU_ZIP>"
         }
     }
 }
 ```
 
-Commit and push to `scoop-qwen-tts`. That's it.
+Do the same for the Vulkan and CUDA manifests with their respective zip URLs and hashes.
 
 ### User experience
 ```powershell
+# Add the bucket once
 scoop bucket add qwen-tts.cpp https://github.com/CHE3MZ/scoop-qwen-tts
-scoop install qwen-tts.cpp
+
+# Install the right build for your GPU:
+scoop install qwen-tts.cpp          # CPU — works everywhere, no GPU required
+scoop install qwen-tts.cpp-vulkan   # Vulkan — AMD/Intel/NVIDIA (recommended for GPU users)
+scoop install qwen-tts.cpp-cuda     # CUDA — NVIDIA only, needs CUDA 12.x runtime
+
+# All three install the same command:
 qwen-tts -m models -t "Hello world" -o hello.wav
 
 # Future updates:
 scoop update qwen-tts.cpp
 ```
+
+### Which zip does each manifest use?
+
+| Manifest file | Download | GPU support |
+|--------------|----------|-------------|
+| `qwen-tts.cpp.json` | `qwen-tts-windows-x64-cpu.zip` | CPU only |
+| `qwen-tts.cpp-vulkan.json` | `qwen-tts-windows-x64-vulkan.zip` | AMD / Intel / NVIDIA |
+| `qwen-tts.cpp-cuda.json` | `qwen-tts-windows-x64-cuda.zip` | NVIDIA (needs CUDA 12.x) |
 
 ---
 

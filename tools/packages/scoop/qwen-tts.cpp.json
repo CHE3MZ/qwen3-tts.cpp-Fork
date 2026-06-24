@@ -1,12 +1,12 @@
 {
-    "version": "1.0.0",
-    "description": "C++17/GGML inference for Qwen3-TTS — full TTS pipeline with voice cloning, ICL, and GPU acceleration. No Python at runtime.",
+    "version": "release-1.0",
+    "description": "C++17/GGML inference for Qwen3-TTS. CPU build — works on all Windows machines. For GPU acceleration use qwen-tts.cpp-vulkan or qwen-tts.cpp-cuda.",
     "homepage": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/v1.0.0/qwen-tts-windows-x64-cpu.zip",
-            "hash": "PLACEHOLDER_SHA256"
+            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-1.0/qwen-tts-windows-x64-cpu.zip",
+            "hash": "PLACEHOLDER_SHA256_CPU"
         }
     },
     "extract_dir": "qwen-tts-windows-x64-cpu",
@@ -17,25 +17,27 @@
         ["qwen-tts.exe", "qwen-tts"]
     ],
     "checkver": {
-        "github": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork"
+        "github": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+        "regex": "release-([\\d.]+)"
     },
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/$version/qwen-tts-windows-x64-cpu.zip"
+                "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-$version/qwen-tts-windows-x64-cpu.zip"
             }
         }
     },
     "notes": [
-        "qwen-tts.cpp installed. Binary available as: qwen-tts",
+        "qwen-tts.cpp (CPU build) installed. Command: qwen-tts",
         "",
-        "Download models (no Python needed):",
-        "  Invoke-WebRequest https://github.com/CHE3MZ/qwen3-tts.cpp-Fork#model-setup",
-        "  or: tools\\model-downloader\\download.bat",
+        "For GPU acceleration (faster generation):",
+        "  Vulkan (AMD/Intel/NVIDIA): scoop install qwen-tts.cpp-vulkan",
+        "  CUDA (NVIDIA only):        scoop install qwen-tts.cpp-cuda",
         "",
-        "Synthesize:",
-        "  qwen-tts -m models -t \"Hello world\" -o hello.wav",
+        "Download models:",
+        "  See https://github.com/CHE3MZ/qwen3-tts.cpp-Fork#model-setup",
         "",
-        "Docs: https://github.com/CHE3MZ/qwen3-tts.cpp-Fork"
+        "Quick start:",
+        "  qwen-tts -m models -t \"Hello world\" -o hello.wav"
     ]
 }

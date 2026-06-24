@@ -1,0 +1,46 @@
+{
+    "version": "release-1.0",
+    "description": "C++17/GGML inference for Qwen3-TTS. CUDA GPU build — NVIDIA GPUs only. Requires CUDA runtime 12.x.",
+    "homepage": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-1.0/qwen-tts-windows-x64-cuda.zip",
+            "hash": "PLACEHOLDER_SHA256_CUDA"
+        }
+    },
+    "extract_dir": "qwen-tts-windows-x64-cuda",
+    "bin": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "shortcuts": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "checkver": {
+        "github": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+        "regex": "release-([\\d.]+)"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/release-$version/qwen-tts-windows-x64-cuda.zip"
+            }
+        }
+    },
+    "notes": [
+        "qwen-tts.cpp-cuda (CUDA build) installed. Command: qwen-tts",
+        "",
+        "Requires NVIDIA GPU with CUDA 12.x runtime.",
+        "Install CUDA runtime from: https://developer.nvidia.com/cuda-downloads",
+        "",
+        "If you don't have NVIDIA, use Vulkan instead:",
+        "  scoop uninstall qwen-tts.cpp-cuda",
+        "  scoop install qwen-tts.cpp-vulkan",
+        "",
+        "Download models:",
+        "  See https://github.com/CHE3MZ/qwen3-tts.cpp-Fork#model-setup",
+        "",
+        "Quick start:",
+        "  qwen-tts -m models -t \"Hello world\" -o hello.wav"
+    ]
+}
