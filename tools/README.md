@@ -31,3 +31,13 @@ Requires `torch`, `safetensors`, `gguf`. See [model-converter/README.md](model-c
 Windows: tools\model-converter\setup_models.bat
 macOS:   tools/model-converter/setup_models.sh
 ```
+
+## packages/
+
+Package manager manifests for distributing pre-built binaries.
+See [packages/README.md](packages/README.md) for the full release process.
+
+- `scoop/qwen-tts.cpp.json` — Scoop manifest (Windows): `scoop install qwen-tts.cpp` → use as `qwen-tts`
+- `homebrew/qwen-tts.cpp.rb` — Homebrew formula (macOS/Linux): `brew install qwen-tts.cpp` → use as `qwen-tts`
+
+These files are reference copies — the live manifests live in separate bucket/tap repos.

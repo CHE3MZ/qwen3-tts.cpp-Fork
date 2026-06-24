@@ -1,0 +1,41 @@
+{
+    "version": "1.0.0",
+    "description": "C++17/GGML inference for Qwen3-TTS — full TTS pipeline with voice cloning, ICL, and GPU acceleration. No Python at runtime.",
+    "homepage": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/v1.0.0/qwen-tts-windows-x64-cpu.zip",
+            "hash": "PLACEHOLDER_SHA256"
+        }
+    },
+    "extract_dir": "qwen-tts-windows-x64-cpu",
+    "bin": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "shortcuts": [
+        ["qwen-tts.exe", "qwen-tts"]
+    ],
+    "checkver": {
+        "github": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/releases/download/$version/qwen-tts-windows-x64-cpu.zip"
+            }
+        }
+    },
+    "notes": [
+        "qwen-tts.cpp installed. Binary available as: qwen-tts",
+        "",
+        "Download models (no Python needed):",
+        "  Invoke-WebRequest https://github.com/CHE3MZ/qwen3-tts.cpp-Fork#model-setup",
+        "  or: tools\\model-downloader\\download.bat",
+        "",
+        "Synthesize:",
+        "  qwen-tts -m models -t \"Hello world\" -o hello.wav",
+        "",
+        "Docs: https://github.com/CHE3MZ/qwen3-tts.cpp-Fork"
+    ]
+}

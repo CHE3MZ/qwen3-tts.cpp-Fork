@@ -1,0 +1,360 @@
+# Release Builds — triggered by pushing a release tag (e.g. release-1.0)
+#
+# Builds all four backends, creates a GitHub Release, and attaches
+# platform zips as assets. These URLs are consumed by the Scoop
+# manifest and Homebrew formula.
+#
+# Tag naming convention: release-<major>.<minor>  (e.g. release-1.0)
+# To trigger:
+#   git tag release-1.0
+#   git push origin release-1.0
+
+name: Release Builds
+
+on:
+  push:
+    tags:
+      - 'release-*'   # matches release-1.0, release-1.1, release-2.0, etc.
+
+permissions:
+  contents: write   # required to create GitHub Releases
+
+jobs:
+
+  # ────────────────────────────────────────────────────────────────
+  # CPU — Windows x64 (no GPU dependencies, broadest compatibility)
+  # ────────────────────────────────────────────────────────────────
+  build-cpu-windows:
+    name: CPU (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build GGML
+        shell: cmd
+        run: |
+          cmake -S ggml -B ggml\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMATH_LIBRARY=
+          cmake --build ggml\build --config Release -j 4
+
+      - name: Build project
+        shell: cmd
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --config Release -j 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "qwen-tts-windows-x64-cpu"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          New-Item -ItemType Directory -Force "$out\include" | Out-Null
+
+          # Rename binary to qwen-tts.exe for the package (internal name stays qwen3-tts-cli.exe)
+          Copy-Item build-release\qwen3-tts-cli.exe "$out\qwen-tts.exe" -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
+          Copy-Item README.md $out\ -ErrorAction SilentlyContinue
+          Copy-Item LICENSE   $out\ -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path $out -DestinationPath "$out.zip"
+          Write-Host "Package contents:"
+          Get-ChildItem $out | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-cpu
+          path: qwen-tts-windows-x64-cpu.zip
+
+  # ────────────────────────────────────────────────────────────────
+  # Metal — macOS (Apple Silicon + Intel, Metal GPU)
+  # ────────────────────────────────────────────────────────────────
+  build-metal-macos:
+    name: Metal (macOS)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build GGML with Metal
+        run: |
+          cmake -S ggml -B ggml/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DGGML_METAL_EMBED_LIBRARY=ON
+          cmake --build ggml/build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Build project
+        run: |
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Package
+        run: |
+          out="qwen-tts-macos-metal"
+          mkdir -p "$out/include"
+
+          # Rename binary to qwen-tts for the package
+          cp build-release/qwen3-tts-cli "$out/qwen-tts" 2>/dev/null || true
+          cp build-release/libqwen3tts.dylib "$out/" 2>/dev/null || true
+          find ggml/build -name 'libggml*.dylib' -exec cp {} "$out/" \; 2>/dev/null || true
+          find ggml/build -name '*.metallib'     -exec cp {} "$out/" \; 2>/dev/null || true
+          cp src/qwen3tts_c_api.h "$out/include/"
+          cp README.md LICENSE "$out/" 2>/dev/null || true
+
+          zip -r "$out.zip" "$out"
+          echo "Package contents:"
+          ls -lh "$out"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-metal
+          path: qwen-tts-macos-metal.zip
+
+  # ────────────────────────────────────────────────────────────────
+  # CUDA — Windows x64 (NVIDIA GPU)
+  # ────────────────────────────────────────────────────────────────
+  build-cuda-windows:
+    name: CUDA (Windows x64)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: '12.8.0'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      - name: Verify CUDA
+        shell: pwsh
+        run: |
+          $cudaPath = $env:CUDA_PATH
+          if (-not $cudaPath) {
+            $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+            if (Test-Path $cudaBase) {
+              $cudaPath = (Get-ChildItem $cudaBase -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+            }
+          }
+          if (-not $cudaPath) { Write-Error "CUDA not found"; exit 1 }
+          Write-Host "CUDA: $cudaPath"
+          & "$cudaPath\bin\nvcc.exe" --version
+          echo "CUDAToolkit_ROOT=$cudaPath" >> $env:GITHUB_ENV
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+
+      - name: Build GGML with CUDA
+        shell: pwsh
+        run: |
+          $cl = "$env:VCToolsInstallDir\bin\Hostx64\x64\cl.exe" -replace '\\', '/'
+          $cuda = "$env:CUDAToolkit_ROOT" -replace '\\', '/'
+          cmake -S ggml -B ggml/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=ON -DGGML_CUDA_F16=ON `
+            "-DCUDAToolkit_ROOT=$cuda" `
+            "-DCMAKE_CUDA_HOST_COMPILER=$cl"
+          cmake --build ggml/build --config Release -j 4
+
+      - name: Build project
+        shell: cmd
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --config Release -j 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "qwen-tts-windows-x64-cuda"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          New-Item -ItemType Directory -Force "$out\include" | Out-Null
+
+          Copy-Item build-release\qwen3-tts-cli.exe "$out\qwen-tts.exe" -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
+          Copy-Item README.md LICENSE $out\ -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path $out -DestinationPath "$out.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-cuda
+          path: qwen-tts-windows-x64-cuda.zip
+
+  # ────────────────────────────────────────────────────────────────
+  # Vulkan — Windows x64 (cross-platform GPU, AMD/Intel/NVIDIA)
+  # ────────────────────────────────────────────────────────────────
+  build-vulkan-windows:
+    name: Vulkan (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1.5.5
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: true
+          cache: false
+
+      - name: Set Vulkan env
+        shell: pwsh
+        run: |
+          if (-not $env:VULKAN_SDK) { Write-Error "VULKAN_SDK not set"; exit 1 }
+          echo "VULKAN_SDK=$env:VULKAN_SDK" >> $env:GITHUB_ENV
+          echo "$env:VULKAN_SDK\Bin" >> $env:GITHUB_PATH
+
+      - name: Build GGML with Vulkan
+        shell: pwsh
+        run: |
+          # Install SPIRV-Headers
+          $instDir = "C:\spirv-headers-install"
+          if (-not (Test-Path "$instDir\share\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake")) {
+            $src = "$env:RUNNER_TEMP\SPIRV-Headers"
+            git clone --depth 1 --branch main https://github.com/KhronosGroup/SPIRV-Headers.git $src
+            cmake -S $src -B "$src\build" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$instDir"
+            cmake --build "$src\build" --config Release
+            cmake --install "$src\build"
+          }
+          $prefix = $instDir -replace '\\', '/'
+          cmake -S ggml -B ggml\build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON `
+            "-DCMAKE_PREFIX_PATH=$prefix"
+          cmake --build ggml\build --config Release -j 4
+
+      - name: Build project
+        shell: cmd
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-release --config Release -j 4
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "qwen-tts-windows-x64-vulkan"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          New-Item -ItemType Directory -Force "$out\include" | Out-Null
+
+          Copy-Item build-release\qwen3-tts-cli.exe "$out\qwen-tts.exe" -ErrorAction SilentlyContinue
+          Copy-Item build-release\qwen3tts.dll       $out\ -ErrorAction SilentlyContinue
+          Get-ChildItem build-release\ggml*.dll | Copy-Item -Destination $out\ -Force -ErrorAction SilentlyContinue
+          Copy-Item src\qwen3tts_c_api.h "$out\include\" -ErrorAction SilentlyContinue
+          Copy-Item README.md LICENSE $out\ -ErrorAction SilentlyContinue
+          $vk = "$env:VULKAN_SDK\Bin\vulkan-1.dll"
+          if (Test-Path $vk) { Copy-Item $vk $out\ -Force }
+
+          Compress-Archive -Path $out -DestinationPath "$out.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-vulkan
+          path: qwen-tts-windows-x64-vulkan.zip
+
+  # ────────────────────────────────────────────────────────────────
+  # Create GitHub Release and attach all zips
+  # ────────────────────────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs:
+      - build-cpu-windows
+      - build-metal-macos
+      - build-cuda-windows
+      - build-vulkan-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets/
+
+      - name: List assets
+        run: find release-assets -name '*.zip' | sort
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-dev') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          generate_release_notes: true
+          body: |
+            ## qwen-tts ${{ github.ref_name }}
+
+            C++17/GGML inference for [Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base).
+            Full pipeline: tokenization → speaker encoding → transformer → vocoder. No Python at runtime.
+
+            ### Downloads
+
+            | Platform | Backend | File |
+            |----------|---------|------|
+            | Windows x64 | CPU | `qwen-tts-windows-x64-cpu.zip` |
+            | Windows x64 | CUDA (NVIDIA) | `qwen-tts-windows-x64-cuda.zip` |
+            | Windows x64 | Vulkan (AMD/Intel/NVIDIA) | `qwen-tts-windows-x64-vulkan.zip` |
+            | macOS (Apple Silicon / Intel) | Metal | `qwen-tts-macos-metal.zip` |
+
+            ### Quick start
+            ```bash
+            # Install via Scoop (Windows)
+            scoop bucket add qwen-tts.cpp https://github.com/CHE3MZ/scoop-qwen-tts
+            scoop install qwen-tts.cpp
+
+            # Install via Homebrew (macOS/Linux)
+            brew tap CHE3MZ/qwen-tts.cpp
+            brew install qwen-tts.cpp
+
+            # Or download manually and run:
+            qwen-tts -m models/ -t "Hello world" -o hello.wav
+            ```
+
+            ### Model setup
+            ```bash
+            # Download pre-built GGUFs (no conversion needed):
+            tools/model-downloader/download.sh   # macOS/Linux
+            tools\model-downloader\download.bat  # Windows
+
+            # Or convert from HuggingFace:
+            python scripts/setup_pipeline_models.py
+            ```
+
+            See [README.md](https://github.com/CHE3MZ/qwen3-tts.cpp-Fork/blob/main/README.md) for full documentation.
+          files: |
+            release-assets/**/*.zip
