@@ -180,6 +180,13 @@ public:
     //   qwen3-tts-tokenizer-*.gguf  (vocoder)
     bool load_models(const std::string & model_dir);
 
+    // Same as load_models() but uses an explicit tokenizer GGUF path instead of
+    // auto-discovering it alongside the model. Useful when you want to compare
+    // different tokenizer precisions (e.g. f16-f16 vs f16-f32 Mimi) without
+    // renaming files.
+    bool load_models(const std::string & model_dir,
+                     const std::string & tokenizer_path);
+
     // Unload all models and free GPU/CPU buffers.
     // The object remains valid — call load_models() again to reload.
     void unload_models();

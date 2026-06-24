@@ -12,6 +12,8 @@ static void print_usage(const char * prog) {
     fprintf(stderr, "  -m, --model <dir|file>        Model directory containing GGUF files (required)\n");
     fprintf(stderr, "                                Or a direct path to a .gguf TTS model file.\n");
     fprintf(stderr, "                                Direct file: tokenizer is found alongside it.\n");
+    fprintf(stderr, "  --tokenizer <file>            Explicit path to tokenizer GGUF (overrides auto-discovery).\n");
+    fprintf(stderr, "                                Useful for comparing f16-f16 vs f16-f32 Mimi quality.\n");
     fprintf(stderr, "  -t, --text <text>              Text to synthesize (required for synthesis)\n");
     fprintf(stderr, "  -o, --output <file>            Output WAV file (default: output.wav)\n");
     fprintf(stderr, "  --output-rate <hz>             Resample output to this rate (e.g. 48000).\n");
@@ -423,6 +425,7 @@ static int run_server(qwen3_tts::Qwen3TTS & tts, const qwen3_tts::tts_params & d
 
 int main(int argc, char ** argv) {
     std::string model_dir;
+    std::string tokenizer_path;  // optional override for tokenizer GGUF
     std::string text;
     std::string output_file = "output.wav";
     std::string reference_audio;
@@ -456,6 +459,7 @@ int main(int argc, char ** argv) {
         if      (arg == "-h" || arg == "--help")            { print_usage(argv[0]); return 0; }
         else if (arg == "--version")                        { fprintf(stdout, "qwen3-tts-cli 0.1.0 (C++17/GGML)\n"); return 0; }
         else if (arg == "-m" || arg == "--model")           { NEXT_ARG(model_dir); }
+        else if (arg == "--tokenizer")                      { NEXT_ARG(tokenizer_path); }
         else if (arg == "-t" || arg == "--text")            { NEXT_ARG(text); }
         else if (arg == "-o" || arg == "--output")          { NEXT_ARG(output_file); }
         else if (arg == "-r" || arg == "--reference")       { NEXT_ARG(reference_audio); }
@@ -505,7 +509,10 @@ int main(int argc, char ** argv) {
     // ---- Load models (once) --------------------------------------------
     qwen3_tts::Qwen3TTS tts;
     fprintf(stderr, "Loading models from: %s\n", model_dir.c_str());
-    if (!tts.load_models(model_dir)) {
+    bool loaded = tokenizer_path.empty()
+        ? tts.load_models(model_dir)
+        : tts.load_models(model_dir, tokenizer_path);
+    if (!loaded) {
         fprintf(stderr, "Error: %s\n", tts.get_error().c_str());
         return 1;
     }

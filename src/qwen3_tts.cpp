@@ -201,6 +201,17 @@ static void resample_linear(const float * input, int input_len, int input_rate,
 Qwen3TTS::Qwen3TTS()  = default;
 Qwen3TTS::~Qwen3TTS() = default;
 
+// --- load_models (with explicit tokenizer path) ----------------------------
+bool Qwen3TTS::load_models(const std::string & model_dir,
+                            const std::string & tokenizer_path) {
+    // Pre-populate decoder_model_path_ so the main load_models() discovery
+    // skips its auto-search and uses the provided path directly.
+    decoder_model_path_ = tokenizer_path;
+    bool ok = load_models(model_dir);
+    if (!ok) decoder_model_path_.clear();  // reset on failure
+    return ok;
+}
+
 // --- load_models -----------------------------------------------------------
 bool Qwen3TTS::load_models(const std::string & model_dir) {
     int64_t t_start = get_time_ms();
@@ -211,8 +222,17 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     decoder_loaded_     = false;
     encoder_loaded_     = false;
 
+    // Reset paths — will be re-populated by discovery below.
+    // (decoder_model_path_ may have been pre-set by the two-arg overload;
+    //  in that case tokenizer_override will be true and discovery is skipped.)
+    tts_model_path_.clear();
+    // Note: do NOT clear decoder_model_path_ here — the two-arg overload pre-sets it.
+
     // ---- Resolve TTS and tokenizer paths --------------------------------
     // Accepts either a directory (auto-selects best GGUF) or a direct .gguf file path.
+    // If decoder_model_path_ was pre-populated by the two-argument overload,
+    // skip tokenizer discovery entirely and use it as-is.
+    const bool tokenizer_override = !decoder_model_path_.empty();
     {
         auto ends_with_gguf = [](const std::string & s) {
             return s.size() >= 5 && s.compare(s.size() - 5, 5, ".gguf") == 0;
@@ -221,6 +241,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
         if (ends_with_gguf(model_dir) && [&]{ FILE*f=fopen(model_dir.c_str(),"rb"); if(f){fclose(f);return true;} return false; }()) {
             // Direct .gguf file path — use it directly, find tokenizer alongside it
             tts_model_path_ = model_dir;
+            if (!tokenizer_override) {
             size_t slash = model_dir.find_last_of("/\\");
             const std::string dir = (slash == std::string::npos) ? "." : model_dir.substr(0, slash);
             const char * tok_cands[] = {
@@ -248,6 +269,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
                 error_msg_ = "No tokenizer GGUF found alongside: " + model_dir;
                 return false;
             }
+            } // !tokenizer_override
         } else {
             // Directory — auto-select best available GGUF
             // Priority: q8_0 > f16, 1.7b > 0.6b
@@ -285,6 +307,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
                 return false;
             }
 
+            if (!tokenizer_override) {
             const char * tok_candidates[] = {
                 // Preferred: f16 vocoder, Mimi priority: f32 > f16 > q8_0
                 "qwen3-tts-tokenizer-f16-f32.gguf",
@@ -309,6 +332,7 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
                 error_msg_ = "No tokenizer/vocoder GGUF found in: " + model_dir;
                 return false;
             }
+            } // !tokenizer_override
         }
     }
 
